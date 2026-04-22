@@ -24,6 +24,20 @@ type schedulerTestOpenAIAccountRepo struct {
 	accounts []Account
 }
 
+type schedulerTestChannelRepo struct {
+	ChannelRepository
+	channel        Channel
+	groupPlatforms map[int64]string
+}
+
+func (r *schedulerTestChannelRepo) ListAll(ctx context.Context) ([]Channel, error) {
+	return []Channel{r.channel}, nil
+}
+
+func (r *schedulerTestChannelRepo) GetGroupPlatforms(ctx context.Context, groupIDs []int64) (map[int64]string, error) {
+	return r.groupPlatforms, nil
+}
+
 func (r schedulerTestOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
 	for i := range r.accounts {
 		if r.accounts[i].ID == id {
@@ -417,6 +431,64 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Require
 		false,
 	)
 	require.ErrorContains(t, err, "no available OpenAI accounts")
+	var unsupportedErr *UnsupportedRequestedModelError
+	require.NotErrorAs(t, err, &unsupportedErr)
+	require.Nil(t, selection)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_ModelWhitelistMissReturnsUnsupported(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10110)
+	accounts := []Account{
+		{
+			ID:          36025,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{"gpt-4o": "gpt-4o"},
+			},
+		},
+		{
+			ID:          36026,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    5,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{"o3-mini": "o3-mini"},
+			},
+		},
+	}
+	cfg := newSchedulerTestOpenAIWSV2Config()
+	cfg.Gateway.Scheduling.LoadBatchEnabled = false
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-4.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	var unsupportedErr *UnsupportedRequestedModelError
+	require.ErrorAs(t, err, &unsupportedErr)
 	require.Nil(t, selection)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
@@ -521,6 +593,61 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_AllowsG
 	require.NotNil(t, selection.Account)
 	require.Equal(t, int64(36041), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_ChannelRestrictionReturnsDenied(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	groupID := int64(10110)
+	channelSvc := NewChannelService(&schedulerTestChannelRepo{
+		channel: Channel{
+			ID:                 1,
+			Status:             StatusActive,
+			GroupIDs:           []int64{groupID},
+			RestrictModels:     true,
+			BillingModelSource: BillingModelSourceRequested,
+			ModelPricing: []ChannelModelPricing{
+				{Platform: PlatformOpenAI, Models: []string{"gpt-4o"}},
+			},
+		},
+		groupPlatforms: map[int64]string{groupID: PlatformOpenAI},
+	}, nil, nil, nil)
+
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{
+			{
+				ID:          36031,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+			},
+		}},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		channelService:     channelSvc,
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-5",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	var deniedErr *ModelAccessDeniedError
+	require.ErrorAs(t, err, &deniedErr)
+	require.Nil(t, selection)
+	require.Empty(t, decision.Layer)
+	require.Contains(t, err.Error(), "gpt-5")
+	require.Contains(t, err.Error(), "channel pricing restriction")
 }
 
 func TestOpenAIGatewayService_SelectAccountWithScheduler_EnabledUsesAdvancedPreviousResponseRouting(t *testing.T) {
