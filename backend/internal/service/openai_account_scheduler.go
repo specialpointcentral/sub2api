@@ -992,6 +992,9 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		})
 	}
 	if len(filtered) == 0 {
+		if classifiedErr := s.classifyNoCandidateError(ctx, req, accounts); classifiedErr != nil {
+			return nil, 0, 0, 0, classifiedErr
+		}
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false)
 	}
 
@@ -1014,6 +1017,9 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		return nil, candidateCount, topK, loadSkew, ErrNoAvailableCompactAccounts
 	}
 	if len(selectionOrder) == 0 {
+		if classifiedErr := s.classifyNoCandidateError(ctx, req, accounts); classifiedErr != nil {
+			return nil, candidateCount, topK, loadSkew, classifiedErr
+		}
 		return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, req.RequireCompact && len(plan.allCandidates) > 0)
 	}
 
@@ -1071,7 +1077,18 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}, candidateCount, topK, loadSkew, nil
 	}
 
+	if classifiedErr := s.classifyNoCandidateError(ctx, req, accounts); classifiedErr != nil {
+		return nil, candidateCount, topK, loadSkew, classifiedErr
+	}
 	return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked)
+}
+
+func (s *defaultOpenAIAccountScheduler) classifyNoCandidateError(ctx context.Context, req OpenAIAccountScheduleRequest, accounts []Account) error {
+	if s == nil || s.service == nil {
+		return nil
+	}
+	needsUpstreamCheck := s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID)
+	return s.service.classifyOpenAINoCandidateError(ctx, req.GroupID, accounts, req.RequestedModel, req.ExcludedIDs, req.RequireCompact, req.RequiredCapability, needsUpstreamCheck)
 }
 
 func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Account, requiredTransport OpenAIUpstreamTransport) bool {
@@ -1345,7 +1362,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),
 			"model", requestedModel)
-		return nil, decision, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+		return nil, decision, modelAccessDeniedError(requestedModel, "channel pricing restriction")
 	}
 
 	var stickyAccountID int64
