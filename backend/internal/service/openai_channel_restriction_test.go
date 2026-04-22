@@ -35,7 +35,8 @@ func TestOpenAISelectAccountForModelWithExclusions_ChannelMappedRestrictionRejec
 
 	groupID := int64(10)
 	_, err := svc.SelectAccountForModelWithExclusions(context.Background(), &groupID, "", "gpt-4.1", nil)
-	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	var deniedErr *ModelAccessDeniedError
+	require.ErrorAs(t, err, &deniedErr)
 	require.Contains(t, err.Error(), "channel pricing restriction")
 }
 
@@ -84,6 +85,87 @@ func TestOpenAISelectAccountForModelWithExclusions_UpstreamRestrictionSkipsDisal
 	require.NoError(t, err)
 	require.NotNil(t, account)
 	require.Equal(t, int64(2), account.ID)
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_ModelWhitelistMissesReturnUnsupported(t *testing.T) {
+	t.Parallel()
+
+	svc := &OpenAIGatewayService{
+		accountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{
+				ID:          1,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-4o": "gpt-4o"},
+				},
+			},
+			{
+				ID:          2,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"o3-mini": "o3-mini"},
+				},
+			},
+		}},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	groupID := int64(10)
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, "", "gpt-4.1", nil)
+	var unsupportedErr *UnsupportedRequestedModelError
+	require.ErrorAs(t, err, &unsupportedErr)
+	require.Nil(t, selection)
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_UpstreamRestrictionAllMissesReturnDenied(t *testing.T) {
+	t.Parallel()
+
+	channelSvc := newTestChannelService(makeStandardRepo(Channel{
+		ID:                 1,
+		Status:             StatusActive,
+		GroupIDs:           []int64{10},
+		RestrictModels:     true,
+		BillingModelSource: BillingModelSourceUpstream,
+		ModelPricing: []ChannelModelPricing{
+			{Platform: PlatformOpenAI, Models: []string{"o3-mini"}},
+		},
+	}, map[int64]string{10: PlatformOpenAI}))
+
+	svc := &OpenAIGatewayService{
+		accountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{
+				ID:          1,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-4.1": "gpt-4o"},
+				},
+			},
+			{
+				ID:          2,
+				Platform:    PlatformOpenAI,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-4.1": "gpt-4.5"},
+				},
+			},
+		}},
+		channelService:     channelSvc,
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	groupID := int64(10)
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, "", "gpt-4.1", nil)
+	var deniedErr *ModelAccessDeniedError
+	require.ErrorAs(t, err, &deniedErr)
+	require.Contains(t, err.Error(), "channel upstream restriction")
+	require.Nil(t, selection)
 }
 
 func TestOpenAISelectAccountForModelWithExclusions_StickyRestrictedUpstreamFallsBack(t *testing.T) {
