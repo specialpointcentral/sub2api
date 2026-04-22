@@ -1131,6 +1131,9 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		})
 	}
 	if len(filtered) == 0 {
+		if classifiedErr := s.classifyNoCandidateError(ctx, req, accounts); classifiedErr != nil {
+			return nil, 0, 0, 0, classifiedErr
+		}
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false)
 	}
 
@@ -1163,7 +1166,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				candidateCount, topK, loadSkew := regularAttempt.candidateCount, regularAttempt.topK, regularAttempt.loadSkew
 				fallbackErr := regularAttempt.err
 				if regularAttempt.err == nil {
-					result, candidateCount, topK, loadSkew, fallbackErr = s.finishLoadBalanceSelectionFallback(ctx, req, regularAttempt)
+					result, candidateCount, topK, loadSkew, fallbackErr = s.finishLoadBalanceSelectionFallback(ctx, req, accounts, regularAttempt)
 					if fallbackErr == nil && result != nil {
 						return result, candidateCount, topK, loadSkew, nil
 					}
@@ -1171,13 +1174,13 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				// 常规池既无法获取也无法排队（含仅剩不支持 compact 的候选）时，
 				// 回退到订阅池的等待计划：busy-but-waitable 的订阅账号不应因常规池存在
 				// 而被丢弃，否则开启订阅优先反而让本可排队成功的请求硬失败。
-				subResult, subCandidateCount, subTopK, subLoadSkew, subErr := s.finishLoadBalanceSelectionFallback(ctx, req, attempt)
+				subResult, subCandidateCount, subTopK, subLoadSkew, subErr := s.finishLoadBalanceSelectionFallback(ctx, req, accounts, attempt)
 				if subErr == nil && subResult != nil {
 					return subResult, subCandidateCount, subTopK, subLoadSkew, nil
 				}
 				return result, candidateCount, topK, loadSkew, fallbackErr
 			}
-			return s.finishLoadBalanceSelectionFallback(ctx, req, attempt)
+			return s.finishLoadBalanceSelectionFallback(ctx, req, accounts, attempt)
 		}
 	}
 
@@ -1188,7 +1191,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if attempt.result != nil {
 		return attempt.result, attempt.candidateCount, attempt.topK, attempt.loadSkew, nil
 	}
-	return s.finishLoadBalanceSelectionFallback(ctx, req, attempt)
+	return s.finishLoadBalanceSelectionFallback(ctx, req, accounts, attempt)
 }
 
 func partitionOpenAIChatGPTSubscriptionAccounts(accounts []*Account) ([]*Account, []*Account) {
@@ -1290,6 +1293,7 @@ func buildOpenAIAccountLoadRequest(accounts []*Account) []AccountWithConcurrency
 func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
+	accounts []Account,
 	attempt openAIAccountLoadSelectionAttempt,
 ) (*AccountSelectionResult, int, int, float64, error) {
 	candidateCount := attempt.candidateCount
@@ -1297,6 +1301,9 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 	loadSkew := attempt.loadSkew
 
 	if len(attempt.selectionOrder) == 0 {
+		if classifiedErr := s.classifyNoCandidateError(ctx, req, accounts); classifiedErr != nil {
+			return nil, candidateCount, topK, loadSkew, classifiedErr
+		}
 		return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, attempt.compactBlocked)
 	}
 
@@ -1333,7 +1340,18 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 		}, candidateCount, topK, loadSkew, nil
 	}
 
+	if classifiedErr := s.classifyNoCandidateError(ctx, req, accounts); classifiedErr != nil {
+		return nil, candidateCount, topK, loadSkew, classifiedErr
+	}
 	return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked)
+}
+
+func (s *defaultOpenAIAccountScheduler) classifyNoCandidateError(ctx context.Context, req OpenAIAccountScheduleRequest, accounts []Account) error {
+	if s == nil || s.service == nil {
+		return nil
+	}
+	needsUpstreamCheck := s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID)
+	return s.service.classifyOpenAINoCandidateError(ctx, req.GroupID, accounts, req.RequestedModel, req.ExcludedIDs, req.RequireCompact, req.RequiredCapability, needsUpstreamCheck)
 }
 
 func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Account, requiredTransport OpenAIUpstreamTransport) bool {
@@ -1765,7 +1783,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),
 			"model", requestedModel)
-		return nil, decision, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+		return nil, decision, modelAccessDeniedError(requestedModel, "channel pricing restriction")
 	}
 
 	var stickyAccountID int64

@@ -134,6 +134,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 
 	for {
+		c.Set("openai_chat_completions_fallback_model", "")
 		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(),
@@ -154,12 +155,45 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformOpenAI)
-				if !cls.ModelNotFound {
-					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
+				if h.handleSelectionError(c, err, streamStarted) {
+					return
 				}
-				h.handleStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
-				return
+				defaultModel := ""
+				if apiKey.Group != nil {
+					defaultModel = apiKey.Group.DefaultMappedModel
+				}
+				if defaultModel != "" && defaultModel != reqModel {
+					reqLog.Info("openai_chat_completions.fallback_to_default_model",
+						zap.String("default_mapped_model", defaultModel),
+					)
+					selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForCapability(
+						c.Request.Context(),
+						apiKey.GroupID,
+						"",
+						sessionHash,
+						defaultModel,
+						failedAccountIDs,
+						service.OpenAIUpstreamTransportAny,
+						service.OpenAIEndpointCapabilityChatCompletions,
+						false,
+						false,
+						requestPlatform,
+					)
+					if err == nil && selection != nil {
+						c.Set("openai_chat_completions_fallback_model", defaultModel)
+					}
+				}
+				if err != nil {
+					if h.handleSelectionError(c, err, streamStarted) {
+						return
+					}
+					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, requestPlatform)
+					if !cls.ModelNotFound {
+						markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
+					}
+					h.handleStreamingAwareError(c, cls.Status, cls.ErrType, cls.Message, streamStarted)
+					return
+				}
 			} else {
 				if lastFailoverErr != nil {
 					h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)

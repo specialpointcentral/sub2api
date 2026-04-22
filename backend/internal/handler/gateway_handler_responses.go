@@ -161,6 +161,16 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", subject.UserID)
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
+				var unsupportedErr *service.UnsupportedRequestedModelError
+				if errors.As(err, &unsupportedErr) {
+					h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", unsupportedErr.Error())
+					return
+				}
+				var deniedErr *service.ModelAccessDeniedError
+				if errors.As(err, &deniedErr) {
+					h.responsesErrorResponse(c, http.StatusForbidden, "permission_error", deniedErr.Error())
+					return
+				}
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformAnthropic)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
