@@ -375,6 +375,16 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, modelName, fs.FailedAccountIDs, "", authSubject.UserID) // Gemini 不使用会话限制
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
+				var unsupportedErr *service.UnsupportedRequestedModelError
+				if errors.As(err, &unsupportedErr) {
+					googleError(c, http.StatusBadRequest, unsupportedErr.Error())
+					return
+				}
+				var deniedErr *service.ModelAccessDeniedError
+				if errors.As(err, &deniedErr) {
+					googleError(c, http.StatusForbidden, deniedErr.Error())
+					return
+				}
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts: "+err.Error())
 				return
