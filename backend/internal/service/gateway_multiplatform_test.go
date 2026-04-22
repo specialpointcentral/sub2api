@@ -1766,7 +1766,8 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 		acc, err := svc.selectAccountWithMixedScheduling(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
 		require.Error(t, err)
 		require.Nil(t, acc)
-		require.Contains(t, err.Error(), "supporting model")
+		var unsupportedErr *UnsupportedRequestedModelError
+		require.ErrorAs(t, err, &unsupportedErr)
 	})
 
 	t.Run("混合调度-优先未使用账号", func(t *testing.T) {
