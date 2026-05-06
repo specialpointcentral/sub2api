@@ -348,7 +348,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AffiliateEnabled: settings.AffiliateEnabled,
 
-		AllowUserViewErrorRequests: settings.AllowUserViewErrorRequests,
+		AllowUserViewErrorRequests:  settings.AllowUserViewErrorRequests,
+		BillingStatementEmailConfig: settings.BillingStatementEmailConfig,
 	}
 
 	// OpenAI fast policy (stored under a dedicated setting key)

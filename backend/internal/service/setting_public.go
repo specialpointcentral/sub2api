@@ -223,6 +223,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
 		SettingKeyAllowUserViewErrorRequests,
+		SettingKeyBillingStatementEmailConfig,
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -279,6 +280,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
 		balanceLowNotifyThreshold = v
 	}
+	billingStatementCfg := ParseBillingStatementEmailConfig(settings[SettingKeyBillingStatementEmailConfig])
+	billingStatementEnabled := billingStatementCfg.Enabled
 
 	return &PublicSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
@@ -336,7 +339,11 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
 
-		AllowUserViewErrorRequests: settings[SettingKeyAllowUserViewErrorRequests] == "true",
+		AllowUserViewErrorRequests:     settings[SettingKeyAllowUserViewErrorRequests] == "true",
+		BillingStatementEmailEnabled:   billingStatementEnabled,
+		BillingStatementDailyEnabled:   billingStatementEnabled && billingStatementCfg.DailyEnabled,
+		BillingStatementWeeklyEnabled:  billingStatementEnabled && billingStatementCfg.WeeklyEnabled,
+		BillingStatementMonthlyEnabled: billingStatementEnabled && billingStatementCfg.MonthlyEnabled,
 	}, nil
 }
 
@@ -497,6 +504,10 @@ type PublicSettingsInjectionPayload struct {
 	AffiliateEnabled                     bool `json:"affiliate_enabled"`
 	RiskControlEnabled                   bool `json:"risk_control_enabled"`
 	AllowUserViewErrorRequests           bool `json:"allow_user_view_error_requests"`
+	BillingStatementEmailEnabled         bool `json:"billing_statement_email_enabled"`
+	BillingStatementDailyEnabled         bool `json:"billing_statement_daily_enabled"`
+	BillingStatementWeeklyEnabled        bool `json:"billing_statement_weekly_enabled"`
+	BillingStatementMonthlyEnabled       bool `json:"billing_statement_monthly_enabled"`
 }
 
 // GetPublicSettingsForInjection returns public settings in a format suitable for HTML injection.
@@ -562,6 +573,10 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
+		BillingStatementEmailEnabled:         settings.BillingStatementEmailEnabled,
+		BillingStatementDailyEnabled:         settings.BillingStatementDailyEnabled,
+		BillingStatementWeeklyEnabled:        settings.BillingStatementWeeklyEnabled,
+		BillingStatementMonthlyEnabled:       settings.BillingStatementMonthlyEnabled,
 	}, nil
 }
 
