@@ -1226,7 +1226,7 @@ export default {
     user: '用户',
     username: '用户名',
     timezone: '时区',
-    timezoneHelp: '用于按你的本地时间展示数据。留空时使用服务器时区：{timezone}',
+    timezoneHelp: '用于账单邮件周期和时间显示。留空时使用服务器时区：{timezone}',
     email: '邮箱',
     status: '状态',
     role: '角色',
@@ -1318,6 +1318,15 @@ export default {
       maxEmailsReached: '已达到通知邮箱数量上限',
       unverified: '未验证',
       verified: '已验证',
+    },
+    billingStatement: {
+      title: '账单邮件偏好',
+      description: '选择接收哪些周期的账单邮件',
+      dailyEnabled: '接收日账单',
+      weeklyEnabled: '接收周账单',
+      monthlyEnabled: '接收月账单',
+      saved: '账单邮件偏好已保存',
+      saveFailed: '保存账单邮件偏好失败',
     },
     avatar: {
       title: '资料头像',
@@ -6338,6 +6347,18 @@ export default {
         description: '控制是否向用户发送订阅即将到期的邮件提醒。',
         enabled: '启用订阅到期提醒',
         enabledHint: '开启后，系统会在订阅到期前 7 天、3 天、1 天各发送一次提醒。'
+      },
+      billingStatement: {
+        title: '账单邮件提醒',
+        description: '定期向用户发送使用账单邮件，包含模型用量、费用和余额信息',
+        enabled: '启用账单邮件提醒',
+        dailyEnabled: '启用日账单',
+        weeklyEnabled: '启用周账单',
+        monthlyEnabled: '启用月账单',
+        dailySchedule: '日账单发送时间（Cron）',
+        weeklySchedule: '周账单发送时间（Cron）',
+        monthlySchedule: '月账单发送时间（Cron）',
+        scheduleHint: 'Cron 表达式，5 字段格式，如 "0 8 * * *" 表示每天 08:00',
       },
       smtp: {
         title: 'SMTP 设置',
