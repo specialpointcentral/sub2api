@@ -291,6 +291,26 @@ func ProvideRateLimitService(
 	return svc
 }
 
+func ProvideAccountUsageService(
+	accountRepo AccountRepository,
+	usageLogRepo UsageLogRepository,
+	claudeFetcher ClaudeUsageFetcher,
+	geminiQuotaService *GeminiQuotaService,
+	antigravityFetcher *AntigravityQuotaFetcher,
+	grokQuotaFetcher *GrokQuotaFetcher,
+	openAIQuotaService *OpenAIQuotaService,
+	usageCache *UsageCache,
+	identityCache IdentityCache,
+	tlsFPProfileService *TLSFingerprintProfileService,
+	concurrencyService *ConcurrencyService,
+	userRepo UserRepository,
+) *AccountUsageService {
+	svc := NewAccountUsageService(accountRepo, usageLogRepo, claudeFetcher, geminiQuotaService, antigravityFetcher, grokQuotaFetcher, openAIQuotaService, usageCache, identityCache, tlsFPProfileService)
+	svc.SetConcurrencyService(concurrencyService)
+	svc.SetUserRepository(userRepo)
+	return svc
+}
+
 // ProvideOpsMetricsCollector creates and starts OpsMetricsCollector.
 func ProvideOpsMetricsCollector(
 	opsRepo OpsRepository,
@@ -584,7 +604,7 @@ var ProviderSet = wire.NewSet(
 	ProvideClaudeTokenProvider,
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,
-	NewAccountUsageService,
+	ProvideAccountUsageService,
 	NewAccountTestService,
 	ProvideSettingService,
 	NewDataManagementService,
