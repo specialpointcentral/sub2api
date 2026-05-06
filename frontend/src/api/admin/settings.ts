@@ -527,6 +527,9 @@ export interface SystemSettings {
 
   // OpenAI fast/flex policy
   openai_fast_policy_settings?: OpenAIFastPolicySettings;
+
+  // Billing statement email config
+  billing_statement_email_config?: string;
 }
 
 export interface UpdateSettingsRequest {
@@ -721,6 +724,9 @@ export interface UpdateSettingsRequest {
 
   // OpenAI fast/flex policy
   openai_fast_policy_settings?: OpenAIFastPolicySettings;
+
+  // Billing statement email config
+  billing_statement_email_config?: string;
 }
 
 /**
