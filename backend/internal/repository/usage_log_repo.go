@@ -3642,6 +3642,66 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 	return stats, nil
 }
 
+func (r *usageLogRepository) GetBillingStatementLines(ctx context.Context, userID int64, startTime, endTime time.Time) ([]service.BillingStatementLine, error) {
+	query := `
+		SELECT
+			COALESCE(model, '') AS model,
+			COALESCE(billing_mode, '') AS billing_mode,
+			group_id,
+			subscription_id,
+			COUNT(*) AS requests,
+			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS total_tokens,
+			COALESCE(SUM(total_cost), 0) AS total_cost,
+			COALESCE(SUM(actual_cost), 0) AS actual_cost,
+			COALESCE(SUM(total_cost - actual_cost), 0) AS discount
+		FROM usage_logs
+		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+		GROUP BY COALESCE(model, ''), COALESCE(billing_mode, ''), group_id, subscription_id
+	`
+	rows, err := r.sql.QueryContext(ctx, query, userID, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			logger.LegacyPrintf("repository.usage_log", "GetBillingStatementLines rows close failed: %v", closeErr)
+		}
+	}()
+
+	lines := make([]service.BillingStatementLine, 0)
+	for rows.Next() {
+		var line service.BillingStatementLine
+		var groupID sql.NullInt64
+		var subscriptionID sql.NullInt64
+		if err := rows.Scan(
+			&line.Model,
+			&line.BillingMode,
+			&groupID,
+			&subscriptionID,
+			&line.Requests,
+			&line.TotalTokens,
+			&line.TotalCost,
+			&line.ActualCost,
+			&line.Discount,
+		); err != nil {
+			return nil, err
+		}
+		if groupID.Valid {
+			v := groupID.Int64
+			line.GroupID = &v
+		}
+		if subscriptionID.Valid {
+			v := subscriptionID.Int64
+			line.Subscription = &v
+		}
+		lines = append(lines, line)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return lines, nil
+}
+
 // AccountUsageHistory represents daily usage history for an account
 type AccountUsageHistory = usagestats.AccountUsageHistory
 
