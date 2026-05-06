@@ -709,6 +709,18 @@ export default {
         enabled: '启用订阅到期提醒',
         enabledHint: '开启后，系统会在订阅到期前 7 天、3 天、1 天各发送一次提醒。'
       },
+      billingStatement: {
+        title: '账单邮件提醒',
+        description: '定期向用户发送使用账单邮件，包含模型用量、费用和余额信息',
+        enabled: '启用账单邮件提醒',
+        dailyEnabled: '启用日账单',
+        weeklyEnabled: '启用周账单',
+        monthlyEnabled: '启用月账单',
+        dailySchedule: '日账单发送时间（Cron）',
+        weeklySchedule: '周账单发送时间（Cron）',
+        monthlySchedule: '月账单发送时间（Cron）',
+        scheduleHint: 'Cron 表达式，5 字段格式，如 "0 8 * * *" 表示每天 08:00',
+      },
       smtp: {
         title: 'SMTP 设置',
         description: '配置用于发送验证码的邮件服务',

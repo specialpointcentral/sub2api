@@ -713,6 +713,18 @@ export default {
         enabled: 'Enable Subscription Expiry Reminder',
         enabledHint: 'When enabled, the system sends reminders 7, 3, and 1 day before expiry.'
       },
+      billingStatement: {
+        title: 'Billing Statement Email',
+        description: 'Send periodic billing statement emails to users with model usage, costs, and balance',
+        enabled: 'Enable Billing Statement Email',
+        dailyEnabled: 'Enable Daily Statement',
+        weeklyEnabled: 'Enable Weekly Statement',
+        monthlyEnabled: 'Enable Monthly Statement',
+        dailySchedule: 'Daily Schedule (Cron)',
+        weeklySchedule: 'Weekly Schedule (Cron)',
+        monthlySchedule: 'Monthly Schedule (Cron)',
+        scheduleHint: 'Cron expression (5-field), e.g. "0 8 * * *" means every day at 08:00',
+      },
       smtp: {
         title: 'SMTP Settings',
         description: 'Configure email sending for verification codes',

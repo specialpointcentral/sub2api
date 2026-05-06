@@ -840,6 +840,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 
 	result.AllowUserViewErrorRequests = settings[SettingKeyAllowUserViewErrorRequests] == "true" // default false
+	result.BillingStatementEmailConfig = settings[SettingKeyBillingStatementEmailConfig]
 
 	return result
 }
