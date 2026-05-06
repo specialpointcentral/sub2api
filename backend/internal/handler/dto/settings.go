@@ -340,6 +340,7 @@ type PublicSettings struct {
 	RiskControlEnabled bool `json:"risk_control_enabled"`
 
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
+	ServerTimezone     string `json:"server_timezone"`
 }
 
 type LoginAgreementDocument struct {
