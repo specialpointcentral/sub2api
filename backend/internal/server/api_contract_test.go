@@ -66,6 +66,9 @@ func TestAPIContracts(t *testing.T) {
 					"balance_notify_extra_emails": null,
 					"total_recharged": 0,
 					"timezone": "UTC",
+					"billing_statement_daily_enabled": false,
+					"billing_statement_weekly_enabled": false,
+					"billing_statement_monthly_enabled": false,
 					"linuxdo_bound": false,
 					"oidc_bound": false,
 					"wechat_bound": false,
@@ -895,6 +898,7 @@ func TestAPIContracts(t *testing.T) {
 					"balance_low_notify_threshold": 0,
 					"balance_low_notify_recharge_url": "",
 					"account_quota_notify_emails": [],
+					"billing_statement_email_config": "",
 					"channel_monitor_enabled": true,
 					"channel_monitor_default_interval_seconds": 60,
 					"available_channels_enabled": false,
@@ -1142,6 +1146,7 @@ func TestAPIContracts(t *testing.T) {
 					"balance_low_notify_threshold": 0,
 					"balance_low_notify_recharge_url": "",
 					"account_quota_notify_emails": [],
+					"billing_statement_email_config": "",
 					"channel_monitor_enabled": true,
 					"channel_monitor_default_interval_seconds": 60,
 					"available_channels_enabled": false,
@@ -2619,6 +2624,11 @@ func (r *stubUsageLogRepo) GetStatsWithFilters(ctx context.Context, filters usag
 		Endpoints:                []usagestats.EndpointStat{},
 	}, nil
 }
+
+func (r *stubUsageLogRepo) GetBillingStatementLines(ctx context.Context, userID int64, startTime, endTime time.Time) ([]service.BillingStatementLine, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (r *stubUsageLogRepo) GetAllGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usagestats.GroupUsageSummary, error) {
 	return nil, errors.New("not implemented")
 }

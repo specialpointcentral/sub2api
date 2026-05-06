@@ -630,6 +630,9 @@ export interface SystemSettings {
 
   // Allow user view error requests
   allow_user_view_error_requests: boolean;
+
+  // Billing statement email config
+  billing_statement_email_config?: string;
 }
 
 export interface UpdateSettingsRequest {
@@ -877,6 +880,9 @@ export interface UpdateSettingsRequest {
   openai_fast_policy_settings?: OpenAIFastPolicySettings;
 
   allow_user_view_error_requests?: boolean;
+
+  // Billing statement email config
+  billing_statement_email_config?: string;
 }
 
 /**
