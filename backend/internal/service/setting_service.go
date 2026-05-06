@@ -762,6 +762,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyAvailableChannelsEnabled,
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
+		SettingKeyBillingStatementEmailConfig,
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -818,6 +819,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
 		balanceLowNotifyThreshold = v
 	}
+	billingStatementCfg := ParseBillingStatementEmailConfig(settings[SettingKeyBillingStatementEmailConfig])
+	billingStatementEnabled := billingStatementCfg.Enabled
 
 	return &PublicSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
@@ -870,10 +873,14 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
+		AffiliateEnabled:         settings[SettingKeyAffiliateEnabled] == "true",
+		RiskControlEnabled:       settings[SettingKeyRiskControlEnabled] == "true",
 
-		AffiliateEnabled:   settings[SettingKeyAffiliateEnabled] == "true",
-		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
-		ServerTimezone:     defaultPublicServerTimezone(),
+		BillingStatementEmailEnabled:   billingStatementEnabled,
+		BillingStatementDailyEnabled:   billingStatementEnabled && billingStatementCfg.DailyEnabled,
+		BillingStatementWeeklyEnabled:  billingStatementEnabled && billingStatementCfg.WeeklyEnabled,
+		BillingStatementMonthlyEnabled: billingStatementEnabled && billingStatementCfg.MonthlyEnabled,
+		ServerTimezone:                 defaultPublicServerTimezone(),
 	}, nil
 }
 
@@ -1183,11 +1190,15 @@ type PublicSettingsInjectionPayload struct {
 	// Feature flags — MUST match the opt-in/opt-out registry in
 	// frontend/src/utils/featureFlags.ts. Missing a field here is the bug
 	// that hid the "可用渠道" menu on page refresh.
-	ChannelMonitorEnabled                bool `json:"channel_monitor_enabled"`
-	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
-	AvailableChannelsEnabled             bool `json:"available_channels_enabled"`
-	AffiliateEnabled                     bool `json:"affiliate_enabled"`
-	RiskControlEnabled                   bool `json:"risk_control_enabled"`
+	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
+	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
+	AvailableChannelsEnabled             bool   `json:"available_channels_enabled"`
+	AffiliateEnabled                     bool   `json:"affiliate_enabled"`
+	RiskControlEnabled                   bool   `json:"risk_control_enabled"`
+	BillingStatementEmailEnabled         bool   `json:"billing_statement_email_enabled"`
+	BillingStatementDailyEnabled         bool   `json:"billing_statement_daily_enabled"`
+	BillingStatementWeeklyEnabled        bool   `json:"billing_statement_weekly_enabled"`
+	BillingStatementMonthlyEnabled       bool   `json:"billing_statement_monthly_enabled"`
 	ServerTimezone                       string `json:"server_timezone"`
 }
 
@@ -1251,6 +1262,10 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
+		BillingStatementEmailEnabled:         settings.BillingStatementEmailEnabled,
+		BillingStatementDailyEnabled:         settings.BillingStatementDailyEnabled,
+		BillingStatementWeeklyEnabled:        settings.BillingStatementWeeklyEnabled,
+		BillingStatementMonthlyEnabled:       settings.BillingStatementMonthlyEnabled,
 		ServerTimezone:                       settings.ServerTimezone,
 	}, nil
 }
@@ -1937,6 +1952,10 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 			return nil, fmt.Errorf("marshal default platform quotas: %w", err)
 		}
 		updates[SettingKeyDefaultPlatformQuotas] = string(blob)
+	}
+
+	if settings.BillingStatementEmailConfig != "" {
+		updates[SettingKeyBillingStatementEmailConfig] = settings.BillingStatementEmailConfig
 	}
 
 	return updates, nil
@@ -3387,6 +3406,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 			result.DefaultPlatformQuotas = parsed
 		}
 	}
+
+	result.BillingStatementEmailConfig = settings[SettingKeyBillingStatementEmailConfig]
 
 	return result
 }

@@ -223,6 +223,9 @@ type SystemSettings struct {
 
 	// 系统全局默认平台配额（key = platform，nil/缺省 = 不限制）
 	DefaultPlatformQuotas map[string]*DefaultPlatformQuotaSetting `json:"default_platform_quotas"`
+
+	// Billing statement email config (JSON)
+	BillingStatementEmailConfig string
 }
 
 type DefaultSubscriptionSetting struct {
@@ -293,7 +296,14 @@ type PublicSettings struct {
 
 	// 风控中心功能开关
 	RiskControlEnabled bool `json:"risk_control_enabled"`
-	ServerTimezone     string `json:"server_timezone"`
+
+	// User-facing billing statement email availability. These expose only whether
+	// each period is globally available, not the admin cron schedule.
+	BillingStatementEmailEnabled   bool   `json:"billing_statement_email_enabled"`
+	BillingStatementDailyEnabled   bool   `json:"billing_statement_daily_enabled"`
+	BillingStatementWeeklyEnabled  bool   `json:"billing_statement_weekly_enabled"`
+	BillingStatementMonthlyEnabled bool   `json:"billing_statement_monthly_enabled"`
+	ServerTimezone                 string `json:"server_timezone"`
 }
 
 type LoginAgreementDocument struct {
