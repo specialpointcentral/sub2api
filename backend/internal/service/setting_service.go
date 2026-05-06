@@ -947,12 +947,24 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
 
-		AffiliateEnabled: settings[SettingKeyAffiliateEnabled] == "true",
-
+		AffiliateEnabled:   settings[SettingKeyAffiliateEnabled] == "true",
 		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
 
 		AllowUserViewErrorRequests: settings[SettingKeyAllowUserViewErrorRequests] == "true",
+		ServerTimezone:             defaultPublicServerTimezone(),
 	}, nil
+}
+
+func defaultPublicServerTimezone() string {
+	if name := strings.TrimSpace(timezone.Name()); name != "" && name != "Local" {
+		return name
+	}
+	if loc := timezone.Location(); loc != nil {
+		if name := strings.TrimSpace(loc.String()); name != "" && name != "Local" {
+			return name
+		}
+	}
+	return "UTC"
 }
 
 // channelMonitorIntervalMin / channelMonitorIntervalMax bound the default interval
@@ -1479,6 +1491,10 @@ type PublicSettingsInjectionPayload struct {
 	AffiliateEnabled                     bool `json:"affiliate_enabled"`
 	RiskControlEnabled                   bool `json:"risk_control_enabled"`
 	AllowUserViewErrorRequests           bool `json:"allow_user_view_error_requests"`
+	BillingStatementEmailEnabled         bool `json:"billing_statement_email_enabled"`
+	BillingStatementDailyEnabled         bool `json:"billing_statement_daily_enabled"`
+	BillingStatementWeeklyEnabled        bool `json:"billing_statement_weekly_enabled"`
+	BillingStatementMonthlyEnabled       bool `json:"billing_statement_monthly_enabled"`
 }
 
 // GetPublicSettingsForInjection returns public settings in a format suitable for HTML injection.
@@ -1544,6 +1560,10 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
+		BillingStatementEmailEnabled:         settings.BillingStatementEmailEnabled,
+		BillingStatementDailyEnabled:         settings.BillingStatementDailyEnabled,
+		BillingStatementWeeklyEnabled:        settings.BillingStatementWeeklyEnabled,
+		BillingStatementMonthlyEnabled:       settings.BillingStatementMonthlyEnabled,
 	}, nil
 }
 
