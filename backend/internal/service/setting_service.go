@@ -838,6 +838,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
 		SettingKeyAllowUserViewErrorRequests,
+		SettingKeyBillingStatementEmailConfig,
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -894,6 +895,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
 		balanceLowNotifyThreshold = v
 	}
+	billingStatementCfg := ParseBillingStatementEmailConfig(settings[SettingKeyBillingStatementEmailConfig])
+	billingStatementEnabled := billingStatementCfg.Enabled
 
 	return &PublicSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
@@ -945,13 +948,15 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorEnabled:                !isFalseSettingValue(settings[SettingKeyChannelMonitorEnabled]),
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
 
-		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
-
-		AffiliateEnabled:   settings[SettingKeyAffiliateEnabled] == "true",
-		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
-
-		AllowUserViewErrorRequests: settings[SettingKeyAllowUserViewErrorRequests] == "true",
-		ServerTimezone:             defaultPublicServerTimezone(),
+		AvailableChannelsEnabled:       settings[SettingKeyAvailableChannelsEnabled] == "true",
+		AffiliateEnabled:               settings[SettingKeyAffiliateEnabled] == "true",
+		RiskControlEnabled:             settings[SettingKeyRiskControlEnabled] == "true",
+		AllowUserViewErrorRequests:     settings[SettingKeyAllowUserViewErrorRequests] == "true",
+		BillingStatementEmailEnabled:   billingStatementEnabled,
+		BillingStatementDailyEnabled:   billingStatementEnabled && billingStatementCfg.DailyEnabled,
+		BillingStatementWeeklyEnabled:  billingStatementEnabled && billingStatementCfg.WeeklyEnabled,
+		BillingStatementMonthlyEnabled: billingStatementEnabled && billingStatementCfg.MonthlyEnabled,
+		ServerTimezone:                 defaultPublicServerTimezone(),
 	}, nil
 }
 
@@ -2271,6 +2276,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 
 	updates[SettingKeyAllowUserViewErrorRequests] = strconv.FormatBool(settings.AllowUserViewErrorRequests)
+	if settings.BillingStatementEmailConfig != "" {
+		updates[SettingKeyBillingStatementEmailConfig] = settings.BillingStatementEmailConfig
+	}
 
 	return updates, nil
 }
@@ -3818,6 +3826,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 
 	result.AllowUserViewErrorRequests = settings[SettingKeyAllowUserViewErrorRequests] == "true" // default false
+	result.BillingStatementEmailConfig = settings[SettingKeyBillingStatementEmailConfig]
 
 	return result
 }
