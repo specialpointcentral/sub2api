@@ -94,6 +94,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // ollamaCloudUsage
 		nil, // auditLog
 		nil, // promptAudit
+		nil, // billingStatementEmail
 	)
 
 	require.NotPanics(t, func() {
