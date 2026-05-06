@@ -263,6 +263,7 @@ type PublicSettings struct {
 
 	// 风控中心功能开关
 	RiskControlEnabled bool `json:"risk_control_enabled"`
+	ServerTimezone     string `json:"server_timezone"`
 }
 
 type LoginAgreementDocument struct {
