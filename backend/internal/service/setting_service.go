@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/imroc/req/v3"
 	"golang.org/x/sync/singleflight"
 )
@@ -945,12 +946,24 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
 
-		AffiliateEnabled: settings[SettingKeyAffiliateEnabled] == "true",
-
+		AffiliateEnabled:   settings[SettingKeyAffiliateEnabled] == "true",
 		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
 
 		AllowUserViewErrorRequests: settings[SettingKeyAllowUserViewErrorRequests] == "true",
+		ServerTimezone:     defaultPublicServerTimezone(),
 	}, nil
+}
+
+func defaultPublicServerTimezone() string {
+	if name := strings.TrimSpace(timezone.Name()); name != "" && name != "Local" {
+		return name
+	}
+	if loc := timezone.Location(); loc != nil {
+		if name := strings.TrimSpace(loc.String()); name != "" && name != "Local" {
+			return name
+		}
+	}
+	return "UTC"
 }
 
 // channelMonitorIntervalMin / channelMonitorIntervalMax bound the default interval
@@ -1264,6 +1277,7 @@ type PublicSettingsInjectionPayload struct {
 	AffiliateEnabled                     bool `json:"affiliate_enabled"`
 	RiskControlEnabled                   bool `json:"risk_control_enabled"`
 	AllowUserViewErrorRequests           bool `json:"allow_user_view_error_requests"`
+	ServerTimezone                       string `json:"server_timezone"`
 }
 
 // GetPublicSettingsForInjection returns public settings in a format suitable for HTML injection.
@@ -1327,6 +1341,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
+		ServerTimezone:                       settings.ServerTimezone,
 	}, nil
 }
 
