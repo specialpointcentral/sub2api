@@ -36,6 +36,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		h.responsesErrorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
 	}
+	c.Request = c.Request.WithContext(service.WithSub2APIUserID(c.Request.Context(), subject.UserID))
 	reqLog := requestLogger(
 		c,
 		"handler.gateway.responses",
@@ -157,7 +158,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	fs := NewFailoverState(h.maxAccountSwitches, false)
 
 	for {
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
+		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", subject.UserID)
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformAnthropic)
