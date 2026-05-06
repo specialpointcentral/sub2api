@@ -538,6 +538,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 
 	updates[SettingKeyAllowUserViewErrorRequests] = strconv.FormatBool(settings.AllowUserViewErrorRequests)
+	if settings.BillingStatementEmailConfig != "" {
+		if err := ValidateBillingStatementEmailConfig(settings.BillingStatementEmailConfig); err != nil {
+			return nil, infraerrors.BadRequest("INVALID_BILLING_STATEMENT_EMAIL_CONFIG", err.Error())
+		}
+		updates[SettingKeyBillingStatementEmailConfig] = settings.BillingStatementEmailConfig
+	}
 
 	return updates, nil
 }

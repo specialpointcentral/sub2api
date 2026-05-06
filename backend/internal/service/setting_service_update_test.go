@@ -861,6 +861,39 @@ func TestSettingService_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(
 	require.Nil(t, repo.updates)
 }
 
+func TestSettingService_UpdateSettings_RejectsInvalidBillingStatementEmailConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "invalid JSON", raw: `{invalid`},
+		{name: "invalid daily cron", raw: `{"daily_schedule":"every morning","weekly_schedule":"0 8 * * 1","monthly_schedule":"0 8 1 * *"}`},
+		{name: "six field cron", raw: `{"daily_schedule":"0 0 8 * * *","weekly_schedule":"0 8 * * 1","monthly_schedule":"0 8 1 * *"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &settingUpdateRepoStub{}
+			svc := NewSettingService(repo, &config.Config{})
+
+			err := svc.UpdateSettings(context.Background(), &SystemSettings{BillingStatementEmailConfig: tt.raw})
+
+			require.Error(t, err)
+			require.Equal(t, "INVALID_BILLING_STATEMENT_EMAIL_CONFIG", infraerrors.Reason(err))
+			require.Nil(t, repo.updates)
+		})
+	}
+}
+
+func TestSettingService_UpdateSettings_AcceptsValidBillingStatementEmailConfig(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+	raw := `{"enabled":true,"daily_schedule":"0 8 * * *","weekly_schedule":"0 8 * * 1","monthly_schedule":"0 8 1 * *"}`
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{BillingStatementEmailConfig: raw})
+
+	require.NoError(t, err)
+	require.Equal(t, raw, repo.updates[SettingKeyBillingStatementEmailConfig])
+}
+
 func TestSettingService_PasskeySwitchPersistsAndDefaultsToConfigured(t *testing.T) {
 	cfg := &config.Config{WebAuthn: config.WebAuthnConfig{
 		Enabled:   true,
