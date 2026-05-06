@@ -303,7 +303,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AffiliateEnabled: settings.AffiliateEnabled,
 
-		AllowUserViewErrorRequests: settings.AllowUserViewErrorRequests,
+		AllowUserViewErrorRequests:  settings.AllowUserViewErrorRequests,
+		BillingStatementEmailConfig: settings.BillingStatementEmailConfig,
 	}
 
 	// OpenAI fast policy (stored under a dedicated setting key)
@@ -657,6 +658,9 @@ type UpdateSettingsRequest struct {
 	// cyber 会话屏蔽开关 + TTL
 	CyberSessionBlockEnabled    *bool `json:"cyber_session_block_enabled"`
 	CyberSessionBlockTTLSeconds *int  `json:"cyber_session_block_ttl_seconds"`
+
+	// Billing statement email config (JSON string, only updated when non-empty)
+	BillingStatementEmailConfig *string `json:"billing_statement_email_config,omitempty"`
 
 	// OpenAI fast/flex policy (optional, only updated when provided)
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
@@ -1817,6 +1821,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.CyberSessionBlockTTLSeconds
 		}(),
+		BillingStatementEmailConfig: func() string {
+			if req.BillingStatementEmailConfig != nil {
+				return *req.BillingStatementEmailConfig
+			}
+			return previousSettings.BillingStatementEmailConfig
+		}(),
 	}
 
 	// req.AuthSourceXxxPlatformQuotas 为 nil 表示本次请求未包含该 source 的 quota 配置（保留 previousAuthSourceDefaults 中的值）；
@@ -2139,12 +2149,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
 
-		AffiliateEnabled: updatedSettings.AffiliateEnabled,
-
+		AffiliateEnabled:            updatedSettings.AffiliateEnabled,
 		RiskControlEnabled:          updatedSettings.RiskControlEnabled,
 		CyberSessionBlockEnabled:    updatedSettings.CyberSessionBlockEnabled,
 		CyberSessionBlockTTLSeconds: updatedSettings.CyberSessionBlockTTLSeconds,
 		AllowUserViewErrorRequests:  updatedSettings.AllowUserViewErrorRequests,
+		BillingStatementEmailConfig: updatedSettings.BillingStatementEmailConfig,
 	}
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)
