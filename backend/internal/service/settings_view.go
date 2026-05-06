@@ -226,6 +226,9 @@ type SystemSettings struct {
 
 	// 允许终端用户在用量页查看自己的失败请求
 	AllowUserViewErrorRequests bool
+
+	// Billing statement email config (JSON)
+	BillingStatementEmailConfig string
 }
 
 type DefaultSubscriptionSetting struct {
@@ -299,7 +302,14 @@ type PublicSettings struct {
 
 	// 允许终端用户在用量页查看自己的失败请求
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
-	ServerTimezone     string `json:"server_timezone"`
+
+	// User-facing billing statement email availability. These expose only whether
+	// each period is globally available, not the admin cron schedule.
+	BillingStatementEmailEnabled   bool   `json:"billing_statement_email_enabled"`
+	BillingStatementDailyEnabled   bool   `json:"billing_statement_daily_enabled"`
+	BillingStatementWeeklyEnabled  bool   `json:"billing_statement_weekly_enabled"`
+	BillingStatementMonthlyEnabled bool   `json:"billing_statement_monthly_enabled"`
+	ServerTimezone                 string `json:"server_timezone"`
 }
 
 type LoginAgreementDocument struct {
