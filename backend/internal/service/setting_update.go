@@ -538,6 +538,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 
 	updates[SettingKeyAllowUserViewErrorRequests] = strconv.FormatBool(settings.AllowUserViewErrorRequests)
+	if settings.BillingStatementEmailConfig != "" {
+		updates[SettingKeyBillingStatementEmailConfig] = settings.BillingStatementEmailConfig
+	}
 
 	return updates, nil
 }
