@@ -390,6 +390,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AccountSchedulingThresholds: settings.AccountSchedulingThresholds,
 		AllowUserViewErrorRequests:  settings.AllowUserViewErrorRequests,
+		BillingStatementEmailConfig: settings.BillingStatementEmailConfig,
 	}
 
 	// OpenAI fast policy (stored under a dedicated setting key)
