@@ -696,6 +696,7 @@ const getOAuthKey = (key: string) => {
   if (props.platform === 'openai') return `admin.accounts.oauth.openai.${key}`
   if (props.platform === 'gemini') return `admin.accounts.oauth.gemini.${key}`
   if (props.platform === 'antigravity') return `admin.accounts.oauth.antigravity.${key}`
+  if (props.platform === 'kiro') return `admin.accounts.oauth.kiro.${key}`
   return `admin.accounts.oauth.${key}`
 }
 
@@ -726,6 +727,8 @@ const sessionTokenInput = ref('')
 const codexSessionInput = ref('')
 const showHelpDialog = ref(false)
 const oauthState = ref('')
+const oauthCallbackPath = ref('')
+const oauthLoginOption = ref('')
 const projectId = ref('')
 
 // Computed: show method selection when either cookie or refresh token option is enabled
@@ -765,10 +768,10 @@ watch(inputMethod, (newVal) => {
   emit('update:inputMethod', newVal)
 })
 
-// Auto-extract code from callback URL (OpenAI/Gemini/Antigravity)
+// Auto-extract code from callback URL (OpenAI/Gemini/Antigravity/Kiro)
 // e.g., http://localhost:8085/callback?code=xxx...&state=...
 watch(authCodeInput, (newVal) => {
-  if (props.platform !== 'openai' && props.platform !== 'gemini' && props.platform !== 'antigravity') return
+  if (props.platform !== 'openai' && props.platform !== 'gemini' && props.platform !== 'antigravity' && props.platform !== 'kiro') return
 
   const trimmed = newVal.trim()
   // Check if it looks like a URL with code parameter
@@ -778,7 +781,11 @@ watch(authCodeInput, (newVal) => {
       const url = new URL(trimmed)
       const code = url.searchParams.get('code')
       const stateParam = url.searchParams.get('state')
-      if ((props.platform === 'openai' || props.platform === 'gemini' || props.platform === 'antigravity') && stateParam) {
+      if (props.platform === 'kiro') {
+        oauthCallbackPath.value = url.pathname || ''
+        oauthLoginOption.value = url.searchParams.get('login_option') || ''
+      }
+      if ((props.platform === 'openai' || props.platform === 'gemini' || props.platform === 'antigravity' || props.platform === 'kiro') && stateParam) {
         oauthState.value = stateParam
       }
       if (code && code !== trimmed) {
@@ -789,7 +796,13 @@ watch(authCodeInput, (newVal) => {
       // If URL parsing fails, try regex extraction
       const match = trimmed.match(/[?&]code=([^&]+)/)
       const stateMatch = trimmed.match(/[?&]state=([^&]+)/)
-      if ((props.platform === 'openai' || props.platform === 'gemini' || props.platform === 'antigravity') && stateMatch && stateMatch[1]) {
+      if (props.platform === 'kiro') {
+        const pathMatch = trimmed.match(/^https?:\/\/[^/]+(\/[^?]*)/)
+        oauthCallbackPath.value = pathMatch?.[1] || oauthCallbackPath.value
+        const loginOptionMatch = trimmed.match(/[?&]login_option=([^&]+)/)
+        oauthLoginOption.value = loginOptionMatch?.[1] || oauthLoginOption.value
+      }
+      if ((props.platform === 'openai' || props.platform === 'gemini' || props.platform === 'antigravity' || props.platform === 'kiro') && stateMatch && stateMatch[1]) {
         oauthState.value = stateMatch[1]
       }
       if (match && match[1] && match[1] !== trimmed) {
@@ -841,6 +854,8 @@ const handleImportCodexSession = () => {
 defineExpose({
   authCode: authCodeInput,
   oauthState,
+  oauthCallbackPath,
+  oauthLoginOption,
   projectId,
   sessionKey: sessionKeyInput,
   refreshToken: refreshTokenInput,
@@ -850,6 +865,8 @@ defineExpose({
   reset: () => {
     authCodeInput.value = ''
     oauthState.value = ''
+    oauthCallbackPath.value = ''
+    oauthLoginOption.value = ''
     projectId.value = ''
     sessionKeyInput.value = ''
     refreshTokenInput.value = ''
