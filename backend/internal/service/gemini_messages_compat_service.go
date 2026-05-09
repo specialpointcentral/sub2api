@@ -275,7 +275,7 @@ func (s *GeminiMessagesCompatService) isAccountUsableForRequestWithPrecheck(
 // isAccountValidForPlatform checks if account matches target platform.
 // Native platform matches directly; mixed scheduling mode requires antigravity to enable mixed_scheduling.
 func (s *GeminiMessagesCompatService) isAccountValidForPlatform(account *Account, platform string, useMixedScheduling bool) bool {
-	if account.Platform == platform {
+	if account.MatchesLookupPlatform(platform) {
 		return true
 	}
 	if useMixedScheduling && account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled() {

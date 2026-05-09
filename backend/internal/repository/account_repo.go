@@ -51,6 +51,27 @@ type accountRepository struct {
 	schedulerCache service.SchedulerCache
 }
 
+func accountPlatformPredicate(platform string) dbpredicate.Account {
+	if platform == service.PlatformKiro {
+		return dbaccount.And(
+			dbaccount.PlatformEQ(service.PlatformAnthropic),
+			dbaccount.TypeEQ(service.AccountTypeKiro),
+		)
+	}
+	return dbaccount.PlatformEQ(platform)
+}
+
+func accountPlatformsPredicate(platforms []string) dbpredicate.Account {
+	if len(platforms) == 0 {
+		return nil
+	}
+	preds := make([]dbpredicate.Account, 0, len(platforms))
+	for _, platform := range platforms {
+		preds = append(preds, accountPlatformPredicate(platform))
+	}
+	return dbaccount.Or(preds...)
+}
+
 var schedulerNeutralExtraKeyPrefixes = []string{
 	"codex_primary_",
 	"codex_secondary_",
@@ -469,7 +490,7 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 	q := r.client.Account.Query()
 
 	if platform != "" {
-		q = q.Where(dbaccount.PlatformEQ(platform))
+		q = q.Where(accountPlatformPredicate(platform))
 	}
 	if accountType != "" {
 		q = q.Where(dbaccount.TypeEQ(accountType))
@@ -650,7 +671,7 @@ func (r *accountRepository) ListActive(ctx context.Context) ([]service.Account, 
 func (r *accountRepository) ListByPlatform(ctx context.Context, platform string) ([]service.Account, error) {
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformEQ(platform),
+			accountPlatformPredicate(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 		).
 		Order(dbent.Asc(dbaccount.FieldPriority)).
@@ -953,7 +974,7 @@ func (r *accountRepository) ListSchedulableByPlatform(ctx context.Context, platf
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformEQ(platform),
+			accountPlatformPredicate(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			tempUnschedulablePredicate(),
@@ -987,7 +1008,7 @@ func (r *accountRepository) ListSchedulableByPlatforms(ctx context.Context, plat
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformIn(platforms...),
+			accountPlatformsPredicate(platforms),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			tempUnschedulablePredicate(),
@@ -1007,7 +1028,7 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatform(ctx context.Conte
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformEQ(platform),
+			accountPlatformPredicate(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			dbaccount.Not(dbaccount.HasAccountGroups()),
@@ -1031,7 +1052,7 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatforms(ctx context.Cont
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformIn(platforms...),
+			accountPlatformsPredicate(platforms),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			dbaccount.Not(dbaccount.HasAccountGroups()),
@@ -1509,7 +1530,7 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 		preds = append(preds, dbaccount.StatusEQ(opts.status))
 	}
 	if len(opts.platforms) > 0 {
-		preds = append(preds, dbaccount.PlatformIn(opts.platforms...))
+		preds = append(preds, accountPlatformsPredicate(opts.platforms))
 	}
 	if opts.schedulable {
 		now := time.Now()
