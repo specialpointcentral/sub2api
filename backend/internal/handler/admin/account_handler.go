@@ -23,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	kiropkg "github.com/Wei-Shaw/sub2api/internal/pkg/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -36,6 +37,11 @@ import (
 // OAuthHandler handles OAuth-related operations for accounts
 type OAuthHandler struct {
 	oauthService *service.OAuthService
+}
+
+type kiroOAuthTokenService interface {
+	RefreshAccountToken(context.Context, *service.Account) (*service.KiroTokenInfo, error)
+	BuildAccountCredentials(*service.KiroTokenInfo) map[string]any
 }
 
 // NewOAuthHandler creates a new OAuth handler
@@ -53,6 +59,7 @@ type AccountHandler struct {
 	geminiOAuthService      *service.GeminiOAuthService
 	antigravityOAuthService *service.AntigravityOAuthService
 	grokOAuthService        service.GrokOAuthTokenService
+	kiroOAuthService        kiroOAuthTokenService
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
@@ -73,6 +80,10 @@ func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamB
 
 func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUsageService) {
 	h.ollamaCloudUsage = usage
+}
+
+func (h *AccountHandler) SetKiroOAuthService(oauthService *service.KiroOAuthService) {
+	h.kiroOAuthService = oauthService
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -115,7 +126,7 @@ type CreateAccountRequest struct {
 	Name                    string         `json:"name" binding:"required"`
 	Notes                   *string        `json:"notes"`
 	Platform                string         `json:"platform" binding:"required"`
-	Type                    string         `json:"type" binding:"required,oneof=oauth setup-token apikey upstream bedrock service_account"`
+	Type                    string         `json:"type" binding:"required,oneof=oauth setup-token apikey upstream bedrock service_account kiro"`
 	Credentials             map[string]any `json:"credentials" binding:"required"`
 	Extra                   map[string]any `json:"extra"`
 	ProxyID                 *int64         `json:"proxy_id"`
@@ -135,7 +146,7 @@ type CreateAccountRequest struct {
 type UpdateAccountRequest struct {
 	Name                    string         `json:"name"`
 	Notes                   *string        `json:"notes"`
-	Type                    string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey upstream bedrock service_account"`
+	Type                    string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey upstream bedrock service_account kiro"`
 	Credentials             map[string]any `json:"credentials"`
 	Extra                   map[string]any `json:"extra"`
 	ProxyID                 *int64         `json:"proxy_id"`
@@ -224,6 +235,9 @@ func (h *AccountHandler) accountResponseFromService(account *service.Account) *d
 }
 
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
+	if h.accountUsageService != nil {
+		h.accountUsageService.EnrichAccountWithKiroRuntimeState(ctx, account)
+	}
 	item := AccountWithConcurrency{
 		Account:            h.accountResponseFromService(account),
 		CurrentConcurrency: 0,
@@ -650,6 +664,9 @@ func (h *AccountHandler) List(c *gin.Context) {
 	result := make([]AccountWithConcurrency, len(accounts))
 	for i := range accounts {
 		acc := &accounts[i]
+		if h.accountUsageService != nil {
+			h.accountUsageService.EnrichAccountWithKiroRuntimeState(c.Request.Context(), acc)
+		}
 		item := AccountWithConcurrency{
 			Account:            h.accountResponseFromService(acc),
 			CurrentConcurrency: concurrencyCounts[acc.ID],
@@ -1230,6 +1247,15 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 			}
 		}
 		newCredentials = service.NormalizeOpenAIPersonalAccessTokenCredentials(account, tokenInfo, newCredentials)
+	} else if account.IsKiro() {
+		if h.kiroOAuthService == nil {
+			return nil, "", fmt.Errorf("kiro oauth service is not configured")
+		}
+		tokenInfo, err := h.kiroOAuthService.RefreshAccountToken(ctx, account)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to refresh Kiro credentials: %w", err)
+		}
+		newCredentials = service.MergeCredentials(account.Credentials, h.kiroOAuthService.BuildAccountCredentials(tokenInfo))
 	} else if account.Platform == service.PlatformGemini {
 		tokenInfo, err := h.geminiOAuthService.RefreshAccountToken(ctx, account)
 		if err != nil {
@@ -2713,6 +2739,18 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// Handle Kiro accounts
+	if account.IsKiro() {
+		mapping := account.GetModelMapping()
+		if len(mapping) == 0 {
+			response.Success(c, kiropkg.DefaultModels)
+			return
+		}
+
+		response.Success(c, buildMappedKiroModels(mapping))
+		return
+	}
+
 	// Handle Claude/Anthropic accounts
 	// For OAuth and Setup-Token accounts: return default models
 	if account.IsOAuth() {
@@ -2854,6 +2892,28 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	}
 
 	response.Success(c, catalog)
+}
+
+func buildMappedKiroModels(mapping map[string]string) []kiropkg.Model {
+	models := make([]kiropkg.Model, 0, len(mapping))
+	for requestedModel := range mapping {
+		var found bool
+		for _, dm := range kiropkg.DefaultModels {
+			if dm.ID == requestedModel {
+				models = append(models, dm)
+				found = true
+				break
+			}
+		}
+		if !found {
+			models = append(models, kiropkg.Model{
+				ID:          requestedModel,
+				Type:        "model",
+				DisplayName: requestedModel,
+			})
+		}
+	}
+	return models
 }
 
 // SetPrivacy handles setting privacy for a single OpenAI/Antigravity OAuth account
@@ -3066,6 +3126,12 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 // GET /api/v1/admin/accounts/antigravity/default-model-mapping
 func (h *AccountHandler) GetAntigravityDefaultModelMapping(c *gin.Context) {
 	response.Success(c, domain.DefaultAntigravityModelMapping)
+}
+
+// GetKiroDefaultModelMapping 获取 Kiro 平台的默认模型映射
+// GET /api/v1/admin/accounts/kiro/default-model-mapping
+func (h *AccountHandler) GetKiroDefaultModelMapping(c *gin.Context) {
+	response.Success(c, domain.DefaultKiroModelMapping)
 }
 
 // sanitizeExtraBaseRPM 对 extra map 中的 base_rpm 值进行范围校验和归一化。

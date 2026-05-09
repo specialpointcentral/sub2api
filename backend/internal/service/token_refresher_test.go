@@ -207,6 +207,12 @@ func TestClaudeTokenRefresher_CanRefresh(t *testing.T) {
 			want:     false,
 		},
 		{
+			name:     "kiro - cannot refresh through claude refresher",
+			platform: PlatformAnthropic,
+			accType:  AccountTypeKiro,
+			want:     false,
+		},
+		{
 			name:     "openai oauth - cannot refresh",
 			platform: PlatformOpenAI,
 			accType:  AccountTypeOAuth,
