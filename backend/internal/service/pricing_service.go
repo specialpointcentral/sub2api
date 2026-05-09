@@ -613,7 +613,7 @@ func normalizeModelNameForPricing(model string) string {
 	// - models/gemini-2.0-flash-exp
 	// - publishers/google/models/gemini-2.5-pro
 	// - projects/.../locations/.../publishers/google/models/gemini-2.5-pro
-	model = strings.TrimSpace(model)
+	model = canonicalModelNameForPricing(model)
 	model = strings.TrimLeft(model, "/")
 	model = strings.TrimPrefix(model, "models/")
 	model = strings.TrimPrefix(model, "publishers/google/models/")
@@ -629,7 +629,31 @@ func normalizeModelNameForPricing(model string) string {
 	if canonical := canonicalizeOpenAIModelAliasSpelling(model); canonical != "" {
 		return canonical
 	}
-	return model
+	return canonicalModelNameForPricing(model)
+}
+
+func canonicalModelNameForPricing(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return ""
+	}
+
+	switch model {
+	case "claude-opus-4.5":
+		return "claude-opus-4-5"
+	case "claude-opus-4.6":
+		return "claude-opus-4-6"
+	case "claude-opus-4.7":
+		return "claude-opus-4-7"
+	case "claude-sonnet-4.5":
+		return "claude-sonnet-4-5"
+	case "claude-sonnet-4.6":
+		return "claude-sonnet-4-6"
+	case "claude-haiku-4.5":
+		return "claude-haiku-4-5"
+	default:
+		return model
+	}
 }
 
 func lastSegment(model string) string {
@@ -675,8 +699,10 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 		{name: "opus-4.6", match: []string{"claude-opus-4-6", "claude-opus-4.6"}},
 		{name: "opus-4.5", match: []string{"claude-opus-4-5", "claude-opus-4.5"}},
 		{name: "opus-4", match: []string{"claude-opus-4", "claude-3-opus"}},
+		{name: "sonnet-4.6", match: []string{"claude-sonnet-4-6", "claude-sonnet-4.6"}},
 		{name: "sonnet-4.5", match: []string{"claude-sonnet-4-5", "claude-sonnet-4.5"}},
 		{name: "sonnet-4", match: []string{"claude-sonnet-4", "claude-3-5-sonnet"}},
+		{name: "haiku-4.5", match: []string{"claude-haiku-4-5", "claude-haiku-4.5"}},
 		{name: "sonnet-3.5", match: []string{"claude-3-5-sonnet", "claude-3.5-sonnet"}},
 		{name: "sonnet-3", match: []string{"claude-3-sonnet"}},
 		{name: "haiku-3.5", match: []string{"claude-3-5-haiku", "claude-3.5-haiku"}},
@@ -714,6 +740,8 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 			}
 		case strings.Contains(model, "sonnet"):
 			switch {
+			case strings.Contains(model, "4.6") || strings.Contains(model, "4-6"):
+				fallbackName = "sonnet-4.6"
 			case strings.Contains(model, "4.5") || strings.Contains(model, "4-5"):
 				fallbackName = "sonnet-4.5"
 			case strings.Contains(model, "3-5") || strings.Contains(model, "3.5"):
@@ -723,6 +751,8 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 			}
 		case strings.Contains(model, "haiku"):
 			switch {
+			case strings.Contains(model, "4.5") || strings.Contains(model, "4-5"):
+				fallbackName = "haiku-4.5"
 			case strings.Contains(model, "3-5") || strings.Contains(model, "3.5"):
 				fallbackName = "haiku-3.5"
 			default:
