@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	kiropkg "github.com/Wei-Shaw/sub2api/internal/pkg/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 )
 
@@ -92,6 +93,7 @@ func NewTokenRefreshService(
 	openaiOAuthService *OpenAIOAuthService,
 	geminiOAuthService *GeminiOAuthService,
 	antigravityOAuthService *AntigravityOAuthService,
+	kiroOAuthService *KiroOAuthService,
 	cacheInvalidator TokenCacheInvalidator,
 	schedulerCache SchedulerCache,
 	cfg *config.Config,
@@ -128,6 +130,7 @@ func NewTokenRefreshService(
 		grokOAuthService = grokOAuthServices[0]
 	}
 	grokRefresher := NewGrokTokenRefresher(grokOAuthService)
+	kiroRefresher := NewKiroTokenRefresher(kiroOAuthService)
 
 	// Each provider is registered exactly once. The same registry supplies both
 	// execution and repository eligibility, preventing future platform drift.
@@ -137,6 +140,7 @@ func NewTokenRefreshService(
 		{platform: PlatformGemini, refresher: geminiRefresher, executor: geminiRefresher},
 		{platform: PlatformAntigravity, refresher: agRefresher, executor: agRefresher},
 		{platform: PlatformGrok, refresher: grokRefresher, executor: grokRefresher},
+		{platform: PlatformKiro, refresher: kiroRefresher, executor: kiroRefresher},
 	}
 
 	return s
@@ -1218,7 +1222,7 @@ func (s *TokenRefreshService) postRefreshStateSyncWithCleanup(parent context.Con
 
 func (s *TokenRefreshService) postRefreshStateSync(ctx context.Context, account *Account) {
 	// 对所有 OAuth 账号调用缓存失效（InvalidateToken 内部根据平台判断是否需要处理）
-	if s.cacheInvalidator != nil && account.Type == AccountTypeOAuth {
+	if s.cacheInvalidator != nil && account.IsOAuth() {
 		if err := s.cacheInvalidator.InvalidateToken(ctx, account); err != nil {
 			slog.Warn("token_refresh.invalidate_token_cache_failed",
 				"account_id", account.ID,
@@ -1409,6 +1413,10 @@ func isSharedProviderRefreshError(err error) bool {
 func isNonRetryableRefreshError(err error) bool {
 	if err == nil {
 		return false
+	}
+	var kiroInvalidGrant *kiropkg.RefreshTokenInvalidError
+	if errors.As(err, &kiroInvalidGrant) {
+		return true
 	}
 	msg := strings.ToLower(err.Error())
 	nonRetryable := []string{
