@@ -153,3 +153,15 @@ func TestUpdateAccount_EmptyExtraPayloadCanClearQuotaLimits(t *testing.T) {
 	require.NotContains(t, repo.account.Extra, "quota_weekly_limit")
 	require.Len(t, repo.account.Extra, 0)
 }
+
+func TestValidateKiroAccountShape(t *testing.T) {
+	require.NoError(t, validateKiroAccountShape(PlatformAnthropic, AccountTypeKiro))
+
+	err := validateKiroAccountShape(PlatformKiro, AccountTypeOAuth)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "platform anthropic with type kiro")
+
+	err = validateKiroAccountShape(PlatformOpenAI, AccountTypeKiro)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "only valid for anthropic platform")
+}

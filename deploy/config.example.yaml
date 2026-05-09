@@ -89,6 +89,10 @@ security:
     enabled: false
     # Allowed upstream hosts for API proxying
     # 允许代理的上游 API 主机列表
+    # If you enable Kiro OAuth / IDC, also allow Kiro auth and AWS SSO OIDC hosts.
+    # 如果启用 Kiro OAuth / IDC，请同时放行 Kiro 鉴权域名和 AWS SSO OIDC 域名。
+    # If you enable Kiro runtime forwarding, also allow the corresponding AWS Q API endpoint.
+    # 如果启用 Kiro 运行时转发，还需要放行对应的 AWS Q API 域名。
     upstream_hosts:
       - "api.openai.com"
       - "api.anthropic.com"
@@ -97,6 +101,11 @@ security:
       - "api.minimaxi.com"
       - "generativelanguage.googleapis.com"
       - "cloudcode-pa.googleapis.com"
+      - "prod.us-east-1.auth.desktop.kiro.dev"
+      - "oidc.us-east-1.amazonaws.com"
+      - "oidc.*.amazonaws.com"
+      - "device.sso.*.amazonaws.com"
+      - "q.*.amazonaws.com"
       - "*.openai.azure.com"
     # Allowed hosts for pricing data download
     # 允许下载定价数据的主机列表
@@ -383,6 +392,9 @@ gateway:
     # Max image requests waiting in this process when overflow_mode=wait, 0=unlimited
     # wait 模式当前进程允许排队等待的图片请求数，0=不限制
     max_waiting_requests: 100
+  # Kiro stream keepalive interval (seconds), 0=use default 25
+  # Kiro 流式 keepalive 间隔（秒），0=使用默认 25
+  kiro_stream_keepalive_interval: 25
   # SSE max line size in bytes (default: 40MB)
   # SSE 单行最大字节数（默认 40MB）
   max_line_size: 41943040
