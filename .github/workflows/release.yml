@@ -277,10 +277,11 @@ jobs:
     if: ${{ needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout default branch
+      - name: Checkout triggering branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          ref: ${{ github.ref }}
 
       - name: Sync VERSION file to released tag
         run: |
@@ -290,6 +291,36 @@ jobs:
           else
             VERSION=${GITHUB_REF#refs/tags/v}
           fi
+
+          if [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            TARGET_BRANCH="$GITHUB_REF_NAME"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            EVENT_BASE_REF="${{ github.event.base_ref || '' }}"
+            if [ -n "$EVENT_BASE_REF" ]; then
+              TARGET_BRANCH=${EVENT_BASE_REF#refs/heads/}
+            else
+              git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+              mapfile -t TARGET_BRANCHES < <(
+                git for-each-ref --format='%(refname:short)' --contains "$GITHUB_SHA" refs/remotes/origin \
+                  | sed 's#^origin/##' \
+                  | grep -v '^HEAD$'
+              )
+
+              if [ "${#TARGET_BRANCHES[@]}" -ne 1 ]; then
+                echo "::error::Tag trigger does not identify a unique source branch. Candidate branches: ${TARGET_BRANCHES[*]:-none}. Run workflow_dispatch from the intended branch to sync VERSION there."
+                exit 1
+              fi
+
+              TARGET_BRANCH="${TARGET_BRANCHES[0]}"
+            fi
+          else
+            echo "::error::Unsupported ref type: $GITHUB_REF_TYPE"
+            exit 1
+          fi
+
+          echo "Syncing VERSION file to triggering branch: $TARGET_BRANCH"
+          git fetch origin "$TARGET_BRANCH"
+          git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
 
           CURRENT_VERSION=$(tr -d '\r\n' < backend/cmd/server/VERSION || true)
           if [ "$CURRENT_VERSION" = "$VERSION" ]; then
@@ -303,4 +334,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/cmd/server/VERSION
           git commit -m "chore: sync VERSION to ${VERSION} [skip ci]"
-          git push origin HEAD:${{ github.event.repository.default_branch }}
+          git push origin HEAD:${TARGET_BRANCH}
