@@ -51,6 +51,13 @@ type Account struct {
 	TempUnschedulableUntil  *time.Time
 	TempUnschedulableReason string
 
+	KiroQuotaState     string
+	KiroQuotaReason    string
+	KiroQuotaResetAt   *time.Time
+	KiroRuntimeState   string
+	KiroRuntimeReason  string
+	KiroRuntimeResetAt *time.Time
+
 	SessionWindowStart  *time.Time
 	SessionWindowEnd    *time.Time
 	SessionWindowStatus string
@@ -206,7 +213,7 @@ func (a *Account) IsOverloaded() bool {
 }
 
 func (a *Account) IsOAuth() bool {
-	return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken
+	return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken || a.Type == AccountTypeKiro
 }
 
 // IsPrivacySet 检查账号的 privacy 是否已成功设置。
@@ -238,6 +245,10 @@ func (a *Account) IsGrokOAuth() bool {
 
 func (a *Account) IsOpenAICompatible() bool {
 	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok)
+}
+
+func (a *Account) IsKiro() bool {
+	return a.Platform == PlatformAnthropic && a.Type == AccountTypeKiro
 }
 
 func (a *Account) GeminiOAuthType() string {
@@ -554,9 +565,10 @@ func (a *Account) GetModelMapping() map[string]string {
 
 func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]string {
 	if a.Credentials == nil {
-		// Antigravity 平台使用默认映射
-		if a.Platform == domain.PlatformAntigravity {
-			return domain.DefaultAntigravityModelMapping
+		// 部分平台在未显式配置 model_mapping 时仍应使用默认映射，
+		// 以限制可调度/可转发的模型集合。
+		if defaults := defaultModelMappingForAccount(a); defaults != nil {
+			return defaults
 		}
 		if a.Platform == domain.PlatformGrok {
 			return xai.DefaultModelMapping()
@@ -565,9 +577,8 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 		return nil
 	}
 	if len(rawMapping) == 0 {
-		// Antigravity 平台使用默认映射
-		if a.Platform == domain.PlatformAntigravity {
-			return domain.DefaultAntigravityModelMapping
+		if defaults := defaultModelMappingForAccount(a); defaults != nil {
+			return defaults
 		}
 		if a.Platform == domain.PlatformGrok {
 			return xai.DefaultModelMapping()
@@ -593,14 +604,32 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 		return result
 	}
 
-	// Antigravity 平台使用默认映射
-	if a.Platform == domain.PlatformAntigravity {
-		return domain.DefaultAntigravityModelMapping
+	if defaults := defaultModelMappingForAccount(a); defaults != nil {
+		return defaults
 	}
 	if a.Platform == domain.PlatformGrok {
 		return xai.DefaultModelMapping()
 	}
 	return nil
+}
+
+func defaultModelMappingForAccount(account *Account) map[string]string {
+	if account == nil {
+		return nil
+	}
+	if account.IsKiro() {
+		return domain.DefaultKiroModelMapping
+	}
+	return defaultModelMappingForPlatform(account.Platform)
+}
+
+func defaultModelMappingForPlatform(platform string) map[string]string {
+	switch platform {
+	case domain.PlatformAntigravity:
+		return domain.DefaultAntigravityModelMapping
+	default:
+		return nil
+	}
 }
 
 func mapPtr(m map[string]any) uintptr {
@@ -749,8 +778,9 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 	return matchWildcardMappingResult(mapping, requestedModel)
 }
 
-// IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）
+// IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）。
 // 如果未配置 mapping，返回 true（允许所有模型）。
+// 对带默认映射的平台（如 Antigravity/Kiro），未显式配置时也会先回退到默认映射。
 //
 // 例外：OpenAI OAuth 账号（Codex 上游）的空映射会排除明确属于其他厂商
 // 家族的模型（deepseek-*/glm-* 等）——转发阶段 normalizeOpenAIModelForUpstream
@@ -768,12 +798,12 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	if mappingSupportsRequestedModel(mapping, requestedModel) {
 		return true
 	}
-	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
+	normalized := normalizeRequestedModelForLookup(a.ModelLookupPlatform(), requestedModel)
 	return normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized)
 }
 
-// GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）
-// 如果未配置 mapping，返回原始模型名
+// GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）。
+// 对带默认映射的平台（如 Antigravity/Kiro），未显式配置时返回默认映射结果。
 func (a *Account) GetMappedModel(requestedModel string) string {
 	mappedModel, _ := a.ResolveMappedModel(requestedModel)
 	return mappedModel
@@ -789,7 +819,7 @@ func (a *Account) ResolveMappedModel(requestedModel string) (mappedModel string,
 	if mappedModel, matched := resolveRequestedModelInMapping(mapping, requestedModel); matched {
 		return mappedModel, true
 	}
-	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
+	normalized := normalizeRequestedModelForLookup(a.ModelLookupPlatform(), requestedModel)
 	if normalized != requestedModel {
 		if mappedModel, matched := resolveRequestedModelInMapping(mapping, normalized); matched {
 			return mappedModel, true
@@ -1180,6 +1210,23 @@ func (a *Account) IsBedrock() bool {
 
 func (a *Account) IsBedrockAPIKey() bool {
 	return a.IsBedrock() && a.GetCredential("auth_mode") == "apikey"
+}
+
+func (a *Account) ModelLookupPlatform() string {
+	if a != nil && a.IsKiro() {
+		return PlatformKiro
+	}
+	if a == nil {
+		return ""
+	}
+	return a.Platform
+}
+
+func (a *Account) MatchesLookupPlatform(platform string) bool {
+	if a == nil {
+		return false
+	}
+	return a.ModelLookupPlatform() == platform
 }
 
 // IsAPIKeyOrBedrock 返回账号类型是否支持配额和池模式等特性
