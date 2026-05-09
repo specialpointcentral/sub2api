@@ -22,6 +22,13 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		s.countTokensError(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return fmt.Errorf("parse request: empty request")
 	}
+	// Kiro does not expose Anthropic's count_tokens endpoint. Return 404 so the
+	// client falls back to local estimation without forwarding Kiro credentials
+	// to Anthropic or invalidating an otherwise healthy account.
+	if account != nil && account.IsKiro() {
+		s.countTokensError(c, http.StatusNotFound, "not_found_error", "count_tokens endpoint is not supported for Kiro")
+		return nil
+	}
 
 	if account != nil && account.IsAnthropicAPIKeyPassthroughEnabled() {
 		passthroughBody := parsed.Body.Bytes()

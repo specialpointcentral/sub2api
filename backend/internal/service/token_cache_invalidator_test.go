@@ -177,11 +177,11 @@ func TestCompositeTokenCacheInvalidator_SkipNonOAuth(t *testing.T) {
 			},
 		},
 		{
-			name: "claude_setup_token",
+			name: "legacy_kiro_platform_oauth",
 			account: &Account{
 				ID:       4,
-				Platform: PlatformAnthropic,
-				Type:     AccountTypeSetupToken,
+				Platform: PlatformKiro,
+				Type:     AccountTypeOAuth,
 			},
 		},
 	}
@@ -194,6 +194,20 @@ func TestCompositeTokenCacheInvalidator_SkipNonOAuth(t *testing.T) {
 			require.Empty(t, cache.deletedKeys)
 		})
 	}
+}
+
+func TestCompositeTokenCacheInvalidator_ClaudeSetupToken(t *testing.T) {
+	cache := &geminiTokenCacheStub{}
+	invalidator := NewCompositeTokenCacheInvalidator(cache)
+	account := &Account{
+		ID:       4,
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeSetupToken,
+	}
+
+	err := invalidator.InvalidateToken(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, []string{"claude:account:4"}, cache.deletedKeys)
 }
 
 func TestCompositeTokenCacheInvalidator_SkipUnsupportedPlatform(t *testing.T) {
