@@ -2798,6 +2798,7 @@ func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingUsesImageCoun
 		0.15,
 		1.0,
 		time.Time{},
+		nil,
 	)
 
 	require.NotNil(t, cost)
@@ -2837,6 +2838,7 @@ func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingUsesSizeTier(
 		1.0,
 		1.0,
 		time.Time{},
+		nil,
 	)
 
 	require.NotNil(t, cost)
@@ -2869,6 +2871,7 @@ func TestGatewayServiceCalculateRecordUsageCost_GroupImagePriceOverridesChannelI
 		1.0,
 		1.0,
 		time.Time{},
+		nil,
 	)
 
 	require.NotNil(t, cost)
@@ -2958,6 +2961,7 @@ func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingNormalizesMis
 		1.0,
 		1.0,
 		time.Time{},
+		nil,
 	)
 
 	require.NotNil(t, cost)

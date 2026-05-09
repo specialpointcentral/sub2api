@@ -906,6 +906,7 @@ export default {
         zhipu: 'Zhipu GLM',
         deepseek: 'DeepSeek',
         composite: 'Composite',
+        kiro: 'Kiro',
       },
       saving: '保存中...',
       noGroups: '暂无分组',

@@ -5,6 +5,8 @@ import {
   createDefaultTimePricingForm,
   formIntervalsToAPI,
   formTimePricingToAPI,
+  getPlatformTagClass,
+  getPlatformTextClass,
   isValidPositiveMultiplier,
   validateIntervals,
   validateTimePricing,
@@ -214,5 +216,12 @@ describe('time pricing', () => {
     expect(validateTimePricing(form, t)).toContain('timezone')
     expect(() => formTimePricingToAPI(form)).not.toThrow()
     expect(formTimePricingToAPI(form)?.timezone).toBe('')
+  })
+})
+
+describe('channel platform styles', () => {
+  it('uses the Kiro orange palette for model pricing fields', () => {
+    expect(getPlatformTagClass('kiro')).toContain('orange')
+    expect(getPlatformTextClass('kiro')).toContain('orange')
   })
 })

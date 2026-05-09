@@ -367,7 +367,7 @@ func newPoolHealthService(repo *poolHealthAccountRepo, refresher *poolHealthRefr
 
 func TestTokenRefreshService_RegistrationsAreCandidateEligibilitySource(t *testing.T) {
 	cfg := &config.Config{}
-	svc := NewTokenRefreshService(nil, nil, nil, nil, nil, nil, nil, cfg, nil)
+	svc := NewTokenRefreshService(nil, nil, nil, nil, nil, nil, nil, nil, cfg, nil)
 
 	require.Equal(t, []string{
 		PlatformAnthropic,
@@ -375,12 +375,40 @@ func TestTokenRefreshService_RegistrationsAreCandidateEligibilitySource(t *testi
 		PlatformGemini,
 		PlatformAntigravity,
 		PlatformGrok,
+		PlatformKiro,
 	}, svc.eligiblePlatforms())
-	require.Len(t, svc.registrations, 5)
+	require.Len(t, svc.registrations, 6)
 	for _, registration := range svc.registrations {
 		require.NotNil(t, registration.refresher)
 		require.NotNil(t, registration.executor)
 	}
+}
+
+func TestTokenRefreshService_DispatchesKiroByModelLookupPlatform(t *testing.T) {
+	account := Account{
+		ID:       91,
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeKiro,
+		Credentials: map[string]any{
+			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
+		},
+	}
+	refresher := &KiroTokenRefresher{}
+	svc := &TokenRefreshService{}
+	states := map[string]*tokenRefreshProviderState{
+		PlatformKiro: {
+			service: svc,
+			registration: tokenRefreshRegistration{
+				platform:  PlatformKiro,
+				refresher: refresher,
+			},
+		},
+	}
+
+	stats := svc.processCandidatePage(context.Background(), []Account{account}, states, 0)
+
+	require.Equal(t, 1, stats.oauth)
+	require.Zero(t, stats.needsRefresh)
 }
 
 func TestTokenRefreshService_ProcessRefreshPagesByStableCursor(t *testing.T) {
