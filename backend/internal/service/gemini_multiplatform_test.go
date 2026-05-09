@@ -49,7 +49,7 @@ func (m *mockAccountRepoForGemini) ExistsByID(ctx context.Context, id int64) (bo
 func (m *mockAccountRepoForGemini) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	var result []Account
 	for _, acc := range m.accounts {
-		if acc.Platform == platform && acc.IsSchedulable() {
+		if testAccountMatchesPlatform(acc, platform) && acc.IsSchedulable() {
 			result = append(result, acc)
 		}
 	}
@@ -92,7 +92,13 @@ func (m *mockAccountRepoForGemini) ListActive(ctx context.Context) ([]Account, e
 	return nil, nil
 }
 func (m *mockAccountRepoForGemini) ListByPlatform(ctx context.Context, platform string) ([]Account, error) {
-	return nil, nil
+	var result []Account
+	for _, acc := range m.accounts {
+		if testAccountMatchesPlatform(acc, platform) {
+			result = append(result, acc)
+		}
+	}
+	return result, nil
 }
 func (m *mockAccountRepoForGemini) UpdateLastUsed(ctx context.Context, id int64) error { return nil }
 func (m *mockAccountRepoForGemini) BatchUpdateLastUsed(ctx context.Context, updates map[int64]time.Time) error {
@@ -129,11 +135,25 @@ func (m *mockAccountRepoForGemini) ListSchedulableByPlatforms(ctx context.Contex
 		platformSet[p] = true
 	}
 	for _, acc := range m.accounts {
-		if platformSet[acc.Platform] && acc.IsSchedulable() {
+		if testAccountMatchesAnyPlatform(acc, platformSet) && acc.IsSchedulable() {
 			result = append(result, acc)
 		}
 	}
 	return result, nil
+}
+
+func testAccountMatchesPlatform(acc Account, platform string) bool {
+	if platform == PlatformKiro {
+		return acc.IsKiro()
+	}
+	return acc.Platform == platform
+}
+
+func testAccountMatchesAnyPlatform(acc Account, platforms map[string]bool) bool {
+	if platforms[PlatformKiro] && acc.IsKiro() {
+		return true
+	}
+	return platforms[acc.Platform]
 }
 func (m *mockAccountRepoForGemini) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
 	if m.listByGroupFunc != nil {
