@@ -1219,7 +1219,8 @@ function generateRoutedCodexFiles(
     kimi: 'kimi-k2.5',
     zhipu: 'glm-4.7',
     deepseek: 'deepseek-v4-pro',
-    composite: 'gpt-5.5'
+    composite: 'gpt-5.5',
+    kiro: 'claude-sonnet-4-6'
   }
   const preferredModel = preferredModels[platform] || ''
   const model = selectCodexCatalogModel(preferredModel)
@@ -1232,7 +1233,8 @@ function generateRoutedCodexFiles(
     kimi: 'Kimi',
     zhipu: 'Zhipu',
     deepseek: 'DeepSeek',
-    composite: 'Composite'
+    composite: 'Composite',
+    kiro: 'Kiro'
   }
   const label = labels[platform]
   const envContent = isWindows
