@@ -267,6 +267,9 @@ func sanitizeOpsUpstreamErrors(entry *OpsInsertErrorLogInput) error {
 		out := *ev
 
 		out.Platform = strings.TrimSpace(out.Platform)
+		out.RequestedModel = truncateString(strings.TrimSpace(out.RequestedModel), 128)
+		out.MappedModel = truncateString(strings.TrimSpace(out.MappedModel), 128)
+		out.KiroModelID = truncateString(strings.TrimSpace(out.KiroModelID), 128)
 		out.UpstreamRequestID = truncateString(strings.TrimSpace(out.UpstreamRequestID), 128)
 		out.Kind = truncateString(strings.TrimSpace(out.Kind), 64)
 
