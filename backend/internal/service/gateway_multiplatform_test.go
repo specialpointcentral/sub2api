@@ -2156,6 +2156,50 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		require.Equal(t, int64(1), result.Account.ID, "应选择优先级最高的账号")
 	})
 
+	t.Run("Anthropic分组仅Kiro账号-负载调度可选中", func(t *testing.T) {
+		groupID := int64(71)
+		repo := &mockAccountRepoForPlatform{
+			accounts: []Account{
+				{
+					ID:            71,
+					Platform:      PlatformAnthropic,
+					Type:          AccountTypeKiro,
+					Priority:      1,
+					Status:        StatusActive,
+					Schedulable:   true,
+					Concurrency:   5,
+					AccountGroups: []AccountGroup{{GroupID: groupID}},
+				},
+			},
+			accountsByID: map[int64]*Account{},
+		}
+		for i := range repo.accounts {
+			repo.accountsByID[repo.accounts[i].ID] = &repo.accounts[i]
+		}
+
+		cfg := testConfig()
+		cfg.Gateway.Scheduling.LoadBatchEnabled = true
+
+		svc := &GatewayService{
+			accountRepo: repo,
+			groupRepo: &mockGroupRepoForGateway{
+				groups: map[int64]*Group{
+					groupID: {ID: groupID, Platform: PlatformAnthropic, Status: StatusActive},
+				},
+			},
+			cache:              &mockGatewayCacheForPlatform{},
+			cfg:                cfg,
+			concurrencyService: NewConcurrencyService(&mockConcurrencyCache{}),
+		}
+
+		result, err := svc.SelectAccountWithLoadAwareness(ctx, &groupID, "", "claude-opus-4-7", nil, "", int64(0))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.Account)
+		require.Equal(t, int64(71), result.Account.ID)
+		require.True(t, result.Account.IsKiro())
+	})
+
 	t.Run("模型路由-无ConcurrencyService也生效", func(t *testing.T) {
 		groupID := int64(1)
 		sessionHash := "sticky"
