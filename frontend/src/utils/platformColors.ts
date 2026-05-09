@@ -15,6 +15,7 @@ export type Platform =
   | 'zhipu'
   | 'deepseek'
   | 'composite'
+  | 'kiro'
 
 // ── Badge (bg + text + border, for inline badges with border) ───────
 const BADGE: Record<Platform, string> = {
@@ -27,6 +28,7 @@ const BADGE: Record<Platform, string> = {
   zhipu: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/30 dark:text-indigo-400',
   deepseek: 'bg-teal-500/10 text-teal-600 border-teal-500/30 dark:text-teal-400',
   composite: 'bg-cyan-500/10 text-cyan-700 border-cyan-500/30 dark:text-cyan-300',
+  kiro: 'bg-orange-500/10 text-orange-600 border-orange-500/30 dark:text-orange-400',
 }
 const BADGE_DEFAULT = 'bg-slate-500/10 text-slate-600 border-slate-500/30 dark:text-slate-400'
 
@@ -41,6 +43,7 @@ const BADGE_LIGHT: Record<Platform, string> = {
   zhipu: 'bg-indigo-500/10 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300',
   deepseek: 'bg-teal-500/10 text-teal-600 dark:bg-teal-500/10 dark:text-teal-300',
   composite: 'bg-cyan-500/10 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300',
+  kiro: 'bg-orange-500/10 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300',
 }
 
 // ── Border ──────────────────────────────────────────────────────────
@@ -54,6 +57,7 @@ const BORDER: Record<Platform, string> = {
   zhipu: 'border-indigo-500/20 dark:border-indigo-500/20',
   deepseek: 'border-teal-500/20 dark:border-teal-500/20',
   composite: 'border-cyan-500/20 dark:border-cyan-500/20',
+  kiro: 'border-orange-500/20 dark:border-orange-500/20',
 }
 const BORDER_DEFAULT = 'border-gray-200 dark:border-dark-700'
 
@@ -68,6 +72,7 @@ const BORDER_STRONG: Record<Platform, string> = {
   zhipu: 'border-indigo-500/35 dark:border-indigo-500/30',
   deepseek: 'border-teal-500/35 dark:border-teal-500/30',
   composite: 'border-cyan-500/35 dark:border-cyan-500/30',
+  kiro: 'border-orange-500/35 dark:border-orange-500/30',
 }
 const BORDER_STRONG_DEFAULT = 'border-gray-300 dark:border-dark-600'
 
@@ -83,6 +88,7 @@ const ACCENT: Record<Platform, string> = {
   zhipu: '#6366f1', // indigo-500
   deepseek: '#14b8a6', // teal-500
   composite: '#06b6d4', // cyan-500
+  kiro: '#f97316', // orange-500
 }
 const ACCENT_DEFAULT = '#14b8a6' // primary-500 (teal)
 
@@ -97,6 +103,7 @@ const ACCENT_BAR: Record<Platform, string> = {
   zhipu: 'bg-gradient-to-r from-indigo-400 to-indigo-500',
   deepseek: 'bg-gradient-to-r from-teal-400 to-teal-500',
   composite: 'bg-gradient-to-r from-slate-500 to-cyan-500',
+  kiro: 'bg-gradient-to-r from-orange-400 to-orange-500',
 }
 const ACCENT_BAR_DEFAULT = 'bg-gradient-to-r from-primary-400 to-primary-500'
 
@@ -111,6 +118,7 @@ const TEXT: Record<Platform, string> = {
   zhipu: 'text-indigo-600 dark:text-indigo-400',
   deepseek: 'text-teal-600 dark:text-teal-400',
   composite: 'text-cyan-700 dark:text-cyan-300',
+  kiro: 'text-orange-600 dark:text-orange-400',
 }
 const TEXT_DEFAULT = 'text-primary-600 dark:text-primary-400'
 
@@ -125,6 +133,7 @@ const ICON: Record<Platform, string> = {
   zhipu: 'text-indigo-500 dark:text-indigo-400',
   deepseek: 'text-teal-500 dark:text-teal-400',
   composite: 'text-cyan-600 dark:text-cyan-300',
+  kiro: 'text-orange-500 dark:text-orange-400',
 }
 const ICON_DEFAULT = 'text-primary-500 dark:text-primary-400'
 
@@ -139,6 +148,7 @@ const BUTTON: Record<Platform, string> = {
   zhipu: 'bg-indigo-500 text-white hover:bg-indigo-600 active:bg-indigo-700 dark:bg-indigo-500/80 dark:hover:bg-indigo-500',
   deepseek: 'bg-teal-500 text-white hover:bg-teal-600 active:bg-teal-700 dark:bg-teal-500/80 dark:hover:bg-teal-500',
   composite: 'bg-cyan-700 text-white hover:bg-cyan-800 active:bg-cyan-900 dark:bg-cyan-600 dark:hover:bg-cyan-500',
+  kiro: 'bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 dark:bg-orange-500/80 dark:hover:bg-orange-500',
 }
 const BUTTON_DEFAULT = 'bg-primary-500 text-white hover:bg-primary-600 dark:bg-primary-600 dark:hover:bg-primary-500'
 
@@ -153,6 +163,7 @@ const DISCOUNT: Record<Platform, string> = {
   zhipu: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
   deepseek: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
   composite: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300',
+  kiro: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
 }
 const DISCOUNT_DEFAULT = 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
 
@@ -167,6 +178,7 @@ const GRADIENT: Record<Platform, string> = {
   zhipu: 'from-indigo-500 to-indigo-600',
   deepseek: 'from-teal-500 to-teal-600',
   composite: 'from-slate-600 to-cyan-600',
+  kiro: 'from-orange-500 to-orange-600',
 }
 const GRADIENT_DEFAULT = 'from-primary-500 to-primary-600'
 
@@ -181,6 +193,7 @@ const GRADIENT_TEXT: Record<Platform, string> = {
   zhipu: 'text-indigo-100',
   deepseek: 'text-teal-100',
   composite: 'text-cyan-100',
+  kiro: 'text-orange-100',
 }
 const GRADIENT_TEXT_DEFAULT = 'text-primary-100'
 
@@ -194,6 +207,7 @@ const GRADIENT_SUBTEXT: Record<Platform, string> = {
   zhipu: 'text-indigo-200',
   deepseek: 'text-teal-200',
   composite: 'text-cyan-200',
+  kiro: 'text-orange-200',
 }
 const GRADIENT_SUBTEXT_DEFAULT = 'text-primary-200'
 
@@ -211,6 +225,7 @@ function isPlatform(p: string): p is Platform {
     p === 'deepseek' ||
     p === 'composite'
   )
+  return p === 'anthropic' || p === 'openai' || p === 'antigravity' || p === 'gemini' || p === 'grok' || p === 'composite' || p === 'kiro'
 }
 
 export function platformBadgeClass(p: string): string {
@@ -276,6 +291,7 @@ export function platformLabel(p: string): string {
     case 'zhipu': return 'Zhipu GLM'
     case 'deepseek': return 'DeepSeek'
     case 'composite': return 'Composite'
+    case 'kiro': return 'Kiro'
     default: return p || 'API'
   }
 }
