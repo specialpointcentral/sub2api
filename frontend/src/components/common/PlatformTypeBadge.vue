@@ -9,7 +9,7 @@
       <span :class="['inline-flex items-center gap-1 px-1.5 py-1', typeClass]">
         <!-- OAuth icon -->
         <svg
-          v-if="type === 'oauth'"
+          v-if="type === 'oauth' || type === 'kiro'"
           class="h-3 w-3"
           fill="none"
           viewBox="0 0 24 24"
@@ -31,9 +31,17 @@
       </span>
     </div>
     <!-- Row 2: Plan type + Privacy mode (only if either exists) -->
-    <div v-if="planLabel || privacyBadge" class="inline-flex items-center overflow-hidden rounded-md">
+    <div v-if="planLabel || privacyBadge || overagesBadge" class="inline-flex items-center overflow-hidden rounded-md">
       <span v-if="planLabel" :class="['inline-flex items-center gap-1 px-1.5 py-1', planBadgeClass]">
         <span>{{ planLabel }}</span>
+      </span>
+      <span
+        v-if="overagesBadge"
+        :class="['inline-flex items-center gap-1 px-1.5 py-1', overagesBadge.class]"
+        :title="overagesBadge.title"
+      >
+        <Icon name="sparkles" size="xs" />
+        <span>{{ overagesBadge.label }}</span>
       </span>
       <span
         v-if="privacyBadge"
@@ -66,13 +74,17 @@ interface Props {
   platform: AccountPlatform
   type: AccountType
   planType?: string
+  overagesEnabled?: boolean
   privacyMode?: string
   subscriptionExpiresAt?: string
 }
 
 const props = defineProps<Props>()
 
+const isKiroAccount = computed(() => props.platform === 'anthropic' && props.type === 'kiro')
+
 const platformLabel = computed(() => {
+  if (isKiroAccount.value) return 'Kiro'
   if (props.platform === 'anthropic') return 'Anthropic'
   if (props.platform === 'openai') return 'OpenAI'
   if (props.platform === 'antigravity') return 'Antigravity'
@@ -81,6 +93,7 @@ const platformLabel = computed(() => {
 })
 
 const typeLabel = computed(() => {
+  if (props.type === 'kiro') return 'Kiro'
   switch (props.type) {
     case 'oauth':
       return 'OAuth'
@@ -118,6 +131,9 @@ const planLabel = computed(() => {
 })
 
 const platformClass = computed(() => {
+  if (isKiroAccount.value) {
+    return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+  }
   if (props.platform === 'anthropic') {
     return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
   }
@@ -134,6 +150,9 @@ const platformClass = computed(() => {
 })
 
 const typeClass = computed(() => {
+  if (isKiroAccount.value) {
+    return 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
+  }
   if (props.platform === 'anthropic') {
     return 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
   }
@@ -154,6 +173,15 @@ const planBadgeClass = computed(() => {
     return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
   }
   return typeClass.value
+})
+
+const overagesBadge = computed(() => {
+  if (!isKiroAccount.value || !props.overagesEnabled) return null
+  return {
+    label: t('admin.accounts.status.overageActive'),
+    title: t('admin.accounts.usageWindow.kiroOverage'),
+    class: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+  }
 })
 
 // Subscription expiration label (non-free only)
