@@ -105,15 +105,23 @@ type antigravityUsageCache struct {
 	timestamp time.Time
 }
 
+// kiroUsageCache 缓存 Kiro 额度快照
+type kiroUsageCache struct {
+	usageInfo *UsageInfo
+	timestamp time.Time
+}
+
 const (
-	apiCacheTTL         = 3 * time.Minute
-	apiErrorCacheTTL    = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
-	antigravityErrorTTL = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
-	apiQueryMaxJitter   = 800 * time.Millisecond // 用量查询最大随机延迟
-	windowStatsCacheTTL = 1 * time.Minute
-	openAIProbeCacheTTL = 10 * time.Minute
-	grokProbeRetryTTL   = 1 * time.Minute
-	grokFreeQuotaWindow = 24 * time.Hour
+	apiCacheTTL             = 3 * time.Minute
+	apiErrorCacheTTL        = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
+	antigravityErrorTTL     = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
+	apiQueryMaxJitter       = 800 * time.Millisecond // 用量查询最大随机延迟
+	windowStatsCacheTTL     = 1 * time.Minute
+	openAIProbeCacheTTL     = 10 * time.Minute
+	grokProbeRetryTTL       = 1 * time.Minute
+	grokFreeQuotaWindow     = 24 * time.Hour
+	kiroUsageErrorTTL       = 1 * time.Minute // Kiro 错误缓存 TTL（可恢复错误）
+	openAICodexProbeVersion = codexCLIVersion // 与网关出站身份同源，避免两处硬编码版本各自漂移
 )
 
 // UsageCache 封装账户使用量相关的缓存
@@ -121,8 +129,10 @@ type UsageCache struct {
 	apiCache          sync.Map           // accountID -> *apiUsageCache
 	windowStatsCache  sync.Map           // accountID -> *windowStatsCache
 	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
+	kiroUsageCache    sync.Map           // accountID -> *kiroUsageCache
 	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
 	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
+	kiroUsageFlight   singleflight.Group // 防止同一 Kiro 账号的并发请求击穿缓存
 	openAIProbeCache  sync.Map           // accountID -> time.Time
 	grokProbeCache    sync.Map           // accountID -> last billing probe attempt
 }
@@ -180,6 +190,23 @@ type AICredit struct {
 	MinimumBalance float64 `json:"minimum_balance,omitempty"`
 }
 
+// KiroCreditProgress 表示 Kiro 主额度或 Bonus 的用量进度。
+type KiroCreditProgress struct {
+	CurrentUsage   float64    `json:"current_usage"`
+	UsageLimit     float64    `json:"usage_limit"`
+	PercentageUsed float64    `json:"percentage_used"`
+	DaysRemaining  int        `json:"days_remaining,omitempty"`
+	ExpiryDate     *time.Time `json:"expiry_date,omitempty"`
+}
+
+// KiroOverageInfo 表示 Kiro 账号的 overage 状态。
+type KiroOverageInfo struct {
+	CurrentOverages float64 `json:"current_overages"`
+	OverageCharges  float64 `json:"overage_charges"`
+	CurrencyCode    string  `json:"currency_code,omitempty"`
+	CurrencySymbol  string  `json:"currency_symbol,omitempty"`
+}
+
 // UsageInfo 账号使用量信息
 type UsageInfo struct {
 	Source             string         `json:"source,omitempty"`               // "passive" or "active"
@@ -225,6 +252,21 @@ type UsageInfo struct {
 
 	// Antigravity AI Credits 余额
 	AICredits []AICredit `json:"ai_credits,omitempty"`
+
+	// Kiro Credits 额度与 overage 信息
+	KiroSubscriptionName string              `json:"kiro_subscription_name,omitempty"`
+	KiroSubscriptionType string              `json:"kiro_subscription_type,omitempty"`
+	KiroResetAt          *time.Time          `json:"kiro_reset_at,omitempty"`
+	KiroOveragesEnabled  bool                `json:"kiro_overages_enabled,omitempty"`
+	KiroCredit           *KiroCreditProgress `json:"kiro_credit,omitempty"`
+	KiroBonus            *KiroCreditProgress `json:"kiro_bonus,omitempty"`
+	KiroOverage          *KiroOverageInfo    `json:"kiro_overage,omitempty"`
+	KiroQuotaState       string              `json:"kiro_quota_state,omitempty"`
+	KiroQuotaReason      string              `json:"kiro_quota_reason,omitempty"`
+	KiroQuotaResetAt     *time.Time          `json:"kiro_quota_reset_at,omitempty"`
+	KiroRuntimeState     string              `json:"kiro_runtime_state,omitempty"`
+	KiroRuntimeReason    string              `json:"kiro_runtime_reason,omitempty"`
+	KiroRuntimeResetAt   *time.Time          `json:"kiro_runtime_reset_at,omitempty"`
 
 	// Antigravity 废弃模型转发规则 (old_model_id -> new_model_id)
 	ModelForwardingRules map[string]string `json:"model_forwarding_rules,omitempty"`
@@ -304,6 +346,9 @@ type AccountUsageService struct {
 	tlsFPProfileService     *TLSFingerprintProfileService
 	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
+	concurrencyService      *ConcurrencyService
+	userRepo                UserRepository
+	kiroCooldownStore       KiroCooldownStore
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -336,7 +381,26 @@ func NewAccountUsageService(
 }
 
 func supportsAnthropicPassiveUsage(account *Account) bool {
-	return account != nil && account.IsAnthropicOAuthOrSetupToken()
+	return account != nil && (account.IsAnthropicOAuthOrSetupToken() || account.IsKiro())
+}
+
+// SetConcurrencyService sets the concurrency service for real-time active user tracking.
+// Called after construction to avoid circular dependency.
+func (s *AccountUsageService) SetConcurrencyService(cs *ConcurrencyService) {
+	s.concurrencyService = cs
+}
+
+// SetUserRepository sets the user repository for resolving user emails.
+// Called after construction to avoid circular dependency.
+func (s *AccountUsageService) SetUserRepository(repo UserRepository) {
+	s.userRepo = repo
+}
+
+func (s *AccountUsageService) SetKiroCooldownStore(store KiroCooldownStore) *AccountUsageService {
+	if s != nil {
+		s.kiroCooldownStore = store
+	}
+	return s
 }
 
 func batchUsageErrorMessage(err error) string {
@@ -373,6 +437,10 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
+	}
+
+	if account.IsKiro() {
+		return s.getKiroUsage(ctx, account, "active", false)
 	}
 
 	// Antigravity 平台：使用 AntigravityQuotaFetcher 获取额度
@@ -598,7 +666,11 @@ func (s *AccountUsageService) GetPassiveUsage(ctx context.Context, accountID int
 }
 
 func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, account *Account) (*UsageInfo, error) {
-	if !supportsAnthropicPassiveUsage(account) {
+	if account.IsKiro() {
+		return s.getKiroUsage(ctx, account, "passive", false)
+	}
+
+	if !account.IsAnthropicOAuthOrSetupToken() {
 		return nil, fmt.Errorf("passive usage only supported for Anthropic OAuth/SetupToken accounts")
 	}
 
