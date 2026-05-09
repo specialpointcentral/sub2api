@@ -263,7 +263,7 @@ func TestAccountRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T)
 	repo := newAccountRepositoryWithSQL(nil, captureQuerySQL{db: db, captured: &capturedSQL, args: &capturedArgs}, nil)
 
 	page, err := repo.ListOAuthRefreshCandidatePage(context.Background(), service.OAuthRefreshPageOptions{
-		Platforms:            []string{service.PlatformAnthropic, service.PlatformOpenAI, service.PlatformGemini, service.PlatformAntigravity, service.PlatformGrok},
+		Platforms:            []string{service.PlatformAnthropic, service.PlatformOpenAI, service.PlatformGemini, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKiro},
 		AfterID:              100,
 		Limit:                200,
 		ActiveOnly:           true,
@@ -282,6 +282,8 @@ func TestAccountRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T)
 	// setup-token 的 access_token 同为 8h 短期令牌，必须与 oauth 一起纳入后台刷新候选
 	require.Contains(t, normalized, "type IN ('oauth', 'setup-token')")
 	require.Contains(t, normalized, "platform = ANY($1)")
+	require.Contains(t, normalized, "platform = 'anthropic' AND type = 'kiro'",
+		"logical Kiro candidates must match their persisted anthropic/kiro shape")
 	require.NotContains(t, normalized, "platform IN ('anthropic'",
 		"candidate platforms must come from the refresher registry instead of a second hard-coded list")
 	require.Contains(t, normalized, "credentials ? 'refresh_token'")
@@ -304,6 +306,8 @@ func TestAccountRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T)
 	platforms, err := valuer.Value()
 	require.NoError(t, err)
 	require.Contains(t, platforms, service.PlatformGrok)
+	require.NotContains(t, platforms, service.PlatformKiro,
+		"the logical Kiro platform must not be queried as a persisted platform value")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

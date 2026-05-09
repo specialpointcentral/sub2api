@@ -192,3 +192,15 @@ func TestUpdateAccount_FixedWeeklyResetClearsLegacyRollingUsage(t *testing.T) {
 	require.Equal(t, currentWeekStart.Format(time.RFC3339), updated.Extra["quota_weekly_start"])
 	require.False(t, updated.IsWeeklyQuotaPeriodExpired())
 }
+
+func TestValidateKiroAccountShape(t *testing.T) {
+	require.NoError(t, validateKiroAccountShape(PlatformAnthropic, AccountTypeKiro))
+
+	err := validateKiroAccountShape(PlatformKiro, AccountTypeOAuth)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "platform anthropic with type kiro")
+
+	err = validateKiroAccountShape(PlatformOpenAI, AccountTypeKiro)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "only valid for anthropic platform")
+}
