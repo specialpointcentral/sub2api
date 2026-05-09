@@ -24,30 +24,33 @@ func (c *CompositeTokenCacheInvalidator) InvalidateToken(ctx context.Context, ac
 	if c == nil || c.cache == nil || account == nil {
 		return nil
 	}
-	if account.Type != AccountTypeOAuth {
+	if !account.IsOAuth() {
 		return nil
 	}
 
 	var keysToDelete []string
 	accountIDKey := "account:" + strconv.FormatInt(account.ID, 10)
 
-	switch account.Platform {
-	case PlatformGemini:
+	switch {
+	case account.IsKiro():
+		keysToDelete = append(keysToDelete, KiroTokenCacheKey(account))
+		keysToDelete = append(keysToDelete, "kiro:"+accountIDKey)
+	case account.Platform == PlatformGemini:
 		// Gemini 可能有两种缓存键：project_id 或 account_id
 		// 首次获取 token 时可能没有 project_id，之后自动检测到 project_id 后会使用新 key
 		// 刷新时需要同时删除两种可能的 key，确保不会遗留旧缓存
 		keysToDelete = append(keysToDelete, GeminiTokenCacheKey(account))
 		keysToDelete = append(keysToDelete, "gemini:"+accountIDKey)
-	case PlatformAntigravity:
+	case account.Platform == PlatformAntigravity:
 		// Antigravity 同样可能有两种缓存键
 		keysToDelete = append(keysToDelete, AntigravityTokenCacheKey(account))
 		keysToDelete = append(keysToDelete, "ag:"+accountIDKey)
-	case PlatformOpenAI:
+	case account.Platform == PlatformOpenAI:
 		keysToDelete = append(keysToDelete, OpenAITokenCacheKey(account))
-	case PlatformGrok:
+	case account.Platform == PlatformGrok:
 		keysToDelete = append(keysToDelete, GrokTokenCacheKey(account))
 		keysToDelete = append(keysToDelete, "grok:"+accountIDKey)
-	case PlatformAnthropic:
+	case account.Platform == PlatformAnthropic:
 		keysToDelete = append(keysToDelete, ClaudeTokenCacheKey(account))
 	default:
 		return nil
