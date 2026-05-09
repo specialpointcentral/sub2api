@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ import (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Wei-Shaw/sub2api"
+	githubRepo     = "specialpointcentral/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -30,6 +31,11 @@ const (
 
 	// Security: max download size (500MB)
 	maxDownloadSize = 500 * 1024 * 1024
+)
+
+var (
+	versionNumberRe = regexp.MustCompile(`\d+`)
+	versionSuffixRe = regexp.MustCompile(`[A-Za-z]+`)
 )
 
 // UpdateCache defines cache operations for update service
@@ -513,18 +519,36 @@ func (s *UpdateService) saveToCache(ctx context.Context, info *UpdateInfo) {
 
 // compareVersions compares two semantic versions
 func compareVersions(current, latest string) int {
-	currentParts := parseVersion(current)
-	latestParts := parseVersion(latest)
+	currentVersion := parseComparableVersion(current)
+	latestVersion := parseComparableVersion(latest)
 
 	for i := 0; i < 3; i++ {
-		if currentParts[i] < latestParts[i] {
+		if currentVersion.Parts[i] < latestVersion.Parts[i] {
 			return -1
 		}
-		if currentParts[i] > latestParts[i] {
+		if currentVersion.Parts[i] > latestVersion.Parts[i] {
 			return 1
 		}
 	}
+	if currentVersion.Suffix < latestVersion.Suffix {
+		return -1
+	}
+	if currentVersion.Suffix > latestVersion.Suffix {
+		return 1
+	}
 	return 0
+}
+
+type comparableVersion struct {
+	Parts  [3]int
+	Suffix string
+}
+
+func parseComparableVersion(v string) comparableVersion {
+	return comparableVersion{
+		Parts:  parseVersion(v),
+		Suffix: parseVersionSuffix(v),
+	}
 }
 
 func parseVersion(v string) [3]int {
@@ -532,9 +556,23 @@ func parseVersion(v string) [3]int {
 	parts := strings.Split(v, ".")
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts) && i < 3; i++ {
-		if parsed, err := strconv.Atoi(parts[i]); err == nil {
+		numericPart := versionNumberRe.FindString(parts[i])
+		if parsed, err := strconv.Atoi(numericPart); err == nil {
 			result[i] = parsed
 		}
 	}
 	return result
+}
+
+func parseVersionSuffix(v string) string {
+	v = strings.TrimPrefix(v, "v")
+	parts := strings.Split(v, ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	patch := parts[2]
+	if idx := strings.IndexAny(patch, "-+"); idx >= 0 {
+		patch = patch[:idx]
+	}
+	return strings.ToUpper(versionSuffixRe.FindString(patch))
 }
