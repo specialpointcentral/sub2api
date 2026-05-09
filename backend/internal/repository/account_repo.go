@@ -51,6 +51,43 @@ type accountRepository struct {
 	schedulerCache service.SchedulerCache
 }
 
+func accountPlatformPredicate(platform string) dbpredicate.Account {
+	if platform == service.PlatformKiro {
+		return dbaccount.And(
+			dbaccount.PlatformEQ(service.PlatformAnthropic),
+			dbaccount.TypeEQ(service.AccountTypeKiro),
+		)
+	}
+	return dbaccount.PlatformEQ(platform)
+}
+
+func accountPlatformsPredicate(platforms []string) dbpredicate.Account {
+	if len(platforms) == 0 {
+		return nil
+	}
+	preds := make([]dbpredicate.Account, 0, len(platforms))
+	for _, platform := range platforms {
+		preds = append(preds, accountPlatformPredicate(platform))
+	}
+	return dbaccount.Or(preds...)
+}
+
+func oauthRefreshPhysicalPlatforms(platforms []string) (physical []string, includeKiro bool) {
+	seen := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		if platform == service.PlatformKiro {
+			includeKiro = true
+			continue
+		}
+		if _, ok := seen[platform]; ok {
+			continue
+		}
+		seen[platform] = struct{}{}
+		physical = append(physical, platform)
+	}
+	return physical, includeKiro
+}
+
 var schedulerNeutralExtraKeyPrefixes = []string{
 	"codex_primary_",
 	"codex_secondary_",
@@ -913,7 +950,7 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 	q := r.client.Account.Query()
 
 	if platform != "" {
-		q = q.Where(dbaccount.PlatformEQ(platform))
+		q = q.Where(accountPlatformPredicate(platform))
 	}
 	if accountType != "" {
 		q = q.Where(dbaccount.TypeEQ(accountType))
@@ -1206,23 +1243,41 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 	// NOT (a AND b) 在 PG 三值逻辑下会把 a 或 b 为 NULL 的行（即绝大多数
 	// 健康账号：temp_unschedulable_until=NULL）也排除，导致后台 token
 	// 刷新工作器漏掉所有正常账号 → access_token 到期后请求开始 401。
+	physicalPlatforms, includeKiro := oauthRefreshPhysicalPlatforms(options.Platforms)
 	query := `
 		SELECT id
 		FROM accounts
 		WHERE deleted_at IS NULL
-			AND schedulable = TRUE
-			AND platform = ANY($1)
+			AND schedulable = TRUE`
+	if includeKiro {
+		query += `
+			AND (platform = ANY($1) OR (platform = 'anthropic' AND type = 'kiro'))`
+	} else {
+		query += `
+			AND platform = ANY($1)`
+	}
+	query += `
 			AND id > $2`
 	if options.ActiveOnly {
 		query += `
 			AND status = 'active'`
 	}
 	if options.IncludeSetupToken {
-		query += `
+		if includeKiro {
+			query += `
+			AND (type IN ('oauth', 'setup-token') OR (platform = 'anthropic' AND type = 'kiro'))`
+		} else {
+			query += `
 			AND type IN ('oauth', 'setup-token')`
+		}
 	} else {
-		query += `
+		if includeKiro {
+			query += `
+			AND (type = 'oauth' OR (platform = 'anthropic' AND type = 'kiro'))`
+		} else {
+			query += `
 			AND type = 'oauth'`
+		}
 	}
 	if options.RequireRefreshToken {
 		query += `
@@ -1240,7 +1295,7 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 		ORDER BY id ASC
 		LIMIT $3`
 
-	rows, err := r.sql.QueryContext(ctx, query, pq.Array(options.Platforms), options.AfterID, options.Limit)
+	rows, err := r.sql.QueryContext(ctx, query, pq.Array(physicalPlatforms), options.AfterID, options.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1290,7 +1345,7 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 func (r *accountRepository) ListByPlatform(ctx context.Context, platform string) ([]service.Account, error) {
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformEQ(platform),
+			accountPlatformPredicate(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 		).
 		Order(dbent.Asc(dbaccount.FieldPriority)).
@@ -2007,7 +2062,7 @@ func (r *accountRepository) ListSchedulableByPlatform(ctx context.Context, platf
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformEQ(platform),
+			accountPlatformPredicate(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			tempUnschedulablePredicate(),
@@ -2041,7 +2096,7 @@ func (r *accountRepository) ListSchedulableByPlatforms(ctx context.Context, plat
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformIn(platforms...),
+			accountPlatformsPredicate(platforms),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			tempUnschedulablePredicate(),
@@ -2061,7 +2116,7 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatform(ctx context.Conte
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformEQ(platform),
+			accountPlatformPredicate(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			dbaccount.Not(dbaccount.HasAccountGroups()),
@@ -2085,7 +2140,7 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatforms(ctx context.Cont
 	now := time.Now()
 	accounts, err := r.client.Account.Query().
 		Where(
-			dbaccount.PlatformIn(platforms...),
+			accountPlatformsPredicate(platforms),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			dbaccount.Not(dbaccount.HasAccountGroups()),
@@ -3063,7 +3118,7 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 		preds = append(preds, dbaccount.StatusEQ(opts.status))
 	}
 	if len(opts.platforms) > 0 {
-		preds = append(preds, dbaccount.PlatformIn(opts.platforms...))
+		preds = append(preds, accountPlatformsPredicate(opts.platforms))
 	}
 	if opts.schedulable {
 		preds = append(preds, dbaccount.SchedulableEQ(true))
