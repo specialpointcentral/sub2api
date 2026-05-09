@@ -462,6 +462,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if err := validateKiroAccountShape(input.Platform, input.Type); err != nil {
+		return nil, err
+	}
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, err
@@ -613,6 +616,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.Name = input.Name
 	}
 	if input.Type != "" {
+		if err := validateKiroAccountShape(account.Platform, input.Type); err != nil {
+			return nil, err
+		}
 		account.Type = input.Type
 	}
 	if input.Notes != nil {
@@ -899,6 +905,16 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 		return nil
 	}
 	return s.accountRepo.UpdateExtra(ctx, id, updates)
+}
+
+func validateKiroAccountShape(platform, accountType string) error {
+	if platform == PlatformKiro {
+		return infraerrors.BadRequest("INVALID_KIRO_ACCOUNT_PLATFORM", "Kiro accounts must use platform anthropic with type kiro")
+	}
+	if accountType == AccountTypeKiro && platform != PlatformAnthropic {
+		return infraerrors.BadRequest("INVALID_KIRO_ACCOUNT_TYPE", "Kiro account type is only valid for anthropic platform")
+	}
+	return nil
 }
 
 // BulkUpdateAccounts updates multiple accounts in one request.

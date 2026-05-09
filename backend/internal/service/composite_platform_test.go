@@ -139,6 +139,8 @@ func TestNewGatewayServiceWiresCompositeModelOwnershipResolver(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 		resolver,
 		nil,
 		nil,
@@ -211,7 +213,7 @@ func TestCompositeGroupSchedulerHasAllCanonicalPlatformBuckets(t *testing.T) {
 		platforms = append(platforms, platform)
 	}
 	require.ElementsMatch(t,
-		[]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek},
+		[]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformKiro},
 		platforms,
 	)
 }
