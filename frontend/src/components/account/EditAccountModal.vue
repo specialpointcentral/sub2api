@@ -39,6 +39,8 @@
                 ? 'https://api.openai.com'
                 : account.platform === 'gemini'
                   ? 'https://generativelanguage.googleapis.com'
+                  : isKiroOAuthAccount
+                    ? 'https://your-kiro-upstream.example.com'
                   : account.platform === 'antigravity'
                     ? 'https://cloudcode-pa.googleapis.com'
                     : 'https://api.anthropic.com'
@@ -61,6 +63,8 @@
                 ? 'sk-proj-...'
                 : account.platform === 'gemini'
                   ? 'AIza...'
+                  : isKiroOAuthAccount
+                    ? 'sk-...'
                   : account.platform === 'antigravity'
                     ? 'sk-...'
                     : 'sk-ant-...'
@@ -69,7 +73,7 @@
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
 
-        <!-- Model Restriction Section (不适用于 Antigravity) -->
+        <!-- Model Restriction Section (不适用于 Antigravity / Kiro) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
           <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
 
@@ -419,9 +423,9 @@
 
       </div>
 
-      <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
+      <!-- OpenAI / Kiro OAuth Model Restriction (OAuth 类型没有 apikey 容器，需要独立区域) -->
       <div
-        v-if="account.platform === 'openai' && account.type === 'oauth'"
+        v-if="(account.platform === 'openai' && account.type === 'oauth') || isKiroOAuthAccount"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -434,6 +438,119 @@
             {{ t('admin.accounts.openai.modelRestrictionDisabledByPassthrough') }}
           </p>
         </div>
+
+        <template v-else-if="isKiroOAuthAccount">
+          <div class="mb-4 flex gap-2">
+            <button
+              type="button"
+              @click="modelRestrictionMode = 'whitelist'"
+              :class="[
+                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                modelRestrictionMode === 'whitelist'
+                  ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+              ]"
+            >
+              {{ t('admin.accounts.modelWhitelist') }}
+            </button>
+            <button
+              type="button"
+              @click="modelRestrictionMode = 'mapping'"
+              :class="[
+                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                modelRestrictionMode === 'mapping'
+                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+              ]"
+            >
+              {{ t('admin.accounts.modelMapping') }}
+            </button>
+          </div>
+
+          <div v-if="modelRestrictionMode === 'whitelist'">
+            <ModelWhitelistSelector v-model="allowedModels" platform="kiro" />
+            <p class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
+              <span v-if="allowedModels.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
+            </p>
+          </div>
+
+          <div v-else>
+            <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+              <p class="text-xs text-purple-700 dark:text-purple-400">
+                {{ t('admin.accounts.mapRequestModels') }}
+              </p>
+            </div>
+
+            <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
+              <div
+                v-for="(mapping, index) in modelMappings"
+                :key="'oauth-' + getModelMappingKey(mapping)"
+                class="flex items-center gap-2"
+              >
+                <input
+                  v-model="mapping.from"
+                  type="text"
+                  class="input flex-1"
+                  :placeholder="t('admin.accounts.requestModel')"
+                />
+                <svg
+                  class="h-4 w-4 flex-shrink-0 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M14 5l7 7m0 0l-7 7m7-7H3"
+                  />
+                </svg>
+                <input
+                  v-model="mapping.to"
+                  type="text"
+                  class="input flex-1"
+                  :placeholder="t('admin.accounts.actualModel')"
+                />
+                <button
+                  type="button"
+                  @click="removeModelMapping(index)"
+                  class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                >
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              @click="addModelMapping"
+              class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
+            >
+              + {{ t('admin.accounts.addMapping') }}
+            </button>
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="preset in presetMappings"
+                :key="'oauth-' + preset.label"
+                type="button"
+                @click="addPresetMapping(preset.from, preset.to)"
+                :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
+              >
+                + {{ preset.label }}
+              </button>
+            </div>
+          </div>
+        </template>
 
         <template v-else>
           <!-- Mode Toggle -->
@@ -2430,10 +2547,13 @@ import {
   resolveOpenAIWSModeFromExtra
 } from '@/utils/openaiWsMode'
 import {
+  buildKiroModelMappingObject,
+  fetchKiroDefaultMappings,
   getPresetMappingsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
   splitModelMappingObject,
+  isKiroDefaultModelMapping,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 
@@ -2468,6 +2588,7 @@ const baseUrlHint = computed(() => {
 
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
+const isKiroOAuthAccount = computed(() => props.account?.platform === 'anthropic' && props.account?.type === 'kiro')
 
 // Model mapping type
 interface ModelMapping {
@@ -2564,6 +2685,28 @@ const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('edit-mod
 const getOpenAICompactModelMappingKey = createStableObjectKeyResolver<ModelMapping>('edit-openai-compact-model-mapping')
 const getAntigravityModelMappingKey = createStableObjectKeyResolver<ModelMapping>('edit-antigravity-model-mapping')
 const getTempUnschedRuleKey = createStableObjectKeyResolver<TempUnschedRuleForm>('edit-temp-unsched-rule')
+
+const applyKiroModelMappings = (entries: Array<[string, string]>) => {
+  const isWhitelistMode = entries.length > 0 && entries.every(([from, to]) => from === to || isKiroDefaultModelMapping(from, to))
+  if (isWhitelistMode) {
+    modelRestrictionMode.value = 'whitelist'
+    allowedModels.value = entries.map(([from]) => from)
+    modelMappings.value = []
+    return
+  }
+  modelRestrictionMode.value = 'mapping'
+  modelMappings.value = entries.map(([from, to]) => ({ from, to }))
+  allowedModels.value = []
+}
+
+const loadDefaultKiroModelMappings = () => {
+  fetchKiroDefaultMappings().then(mappings => {
+    if (!isKiroOAuthAccount.value) return
+    modelRestrictionMode.value = 'whitelist'
+    allowedModels.value = mappings.map(({ from }) => from)
+    modelMappings.value = []
+  })
+}
 
 const showMixedChannelWarning = ref(false)
 const mixedChannelWarningDetails = ref<{ groupName: string; currentPlatform: string; otherPlatform: string } | null>(
@@ -2830,7 +2973,9 @@ const openAICompactStatusKey = computed(() => {
 })
 
 // Computed: current preset mappings based on platform
-const presetMappings = computed(() => getPresetMappingsByPlatform(props.account?.platform || 'anthropic'))
+const presetMappings = computed(() => getPresetMappingsByPlatform(
+  isKiroOAuthAccount.value ? 'kiro' : (props.account?.platform || 'anthropic')
+))
 const tempUnschedPresets = computed(() => [
   {
     label: t('admin.accounts.tempUnschedulable.presets.overloadLabel'),
@@ -3218,8 +3363,16 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           : 'https://api.anthropic.com'
     editBaseUrl.value = platformDefaultUrl
 
-    // Load model mappings for OpenAI OAuth accounts
-    if (newAccount.platform === 'openai' && newAccount.credentials) {
+    // Load model mappings for OpenAI/Kiro OAuth accounts
+    if (isKiroOAuthAccount.value && newAccount.credentials) {
+      const oauthCredentials = newAccount.credentials as Record<string, unknown>
+      const existingMappings = oauthCredentials.model_mapping as Record<string, string> | undefined
+      if (existingMappings && typeof existingMappings === 'object' && Object.keys(existingMappings).length > 0) {
+        applyKiroModelMappings(Object.entries(existingMappings))
+      } else {
+        loadDefaultKiroModelMappings()
+      }
+    } else if (newAccount.platform === 'openai' && newAccount.credentials) {
       const oauthCredentials = newAccount.credentials as Record<string, unknown>
       loadModelRestrictionFromMapping(oauthCredentials.model_mapping as Record<string, unknown> | undefined)
     } else {
@@ -3258,6 +3411,7 @@ watch(
   },
   { immediate: true }
 )
+
 
 // Model mapping helpers
 const addModelMapping = () => {
@@ -3737,6 +3891,11 @@ const handleSubmit = async () => {
       const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
       const shouldApplyModelMapping = !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)
 
+      if (!newBaseUrl) {
+        appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
+        return
+      }
+
       // Always update credentials for apikey type to handle model mapping changes
       const newCredentials: Record<string, unknown> = {
         ...currentCredentials,
@@ -3954,6 +4113,22 @@ const handleSubmit = async () => {
           ((props.account.credentials as Record<string, unknown>) || {})
       const newCredentials: Record<string, unknown> = { ...currentCredentials }
       applyOpenAIModelMappingCredentials(newCredentials)
+
+      updatePayload.credentials = newCredentials
+    }
+
+    // Kiro OAuth: persist model mapping to credentials
+    if (isKiroOAuthAccount.value) {
+      const currentCredentials = (updatePayload.credentials as Record<string, unknown>) ||
+        ((props.account.credentials as Record<string, unknown>) || {})
+      const newCredentials: Record<string, unknown> = { ...currentCredentials }
+
+      const modelMapping = buildKiroModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+      if (modelMapping) {
+        newCredentials.model_mapping = modelMapping
+      } else {
+        delete newCredentials.model_mapping
+      }
 
       updatePayload.credentials = newCredentials
     }
