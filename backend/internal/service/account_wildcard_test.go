@@ -134,6 +134,7 @@ func TestAccountIsModelSupported(t *testing.T) {
 	tests := []struct {
 		name           string
 		platform       string
+		accountType    string
 		credentials    map[string]any
 		requestedModel string
 		expected       bool
@@ -150,6 +151,22 @@ func TestAccountIsModelSupported(t *testing.T) {
 			credentials:    map[string]any{},
 			requestedModel: "any-model",
 			expected:       true,
+		},
+		{
+			name:           "kiro no mapping falls back to default whitelist",
+			platform:       PlatformAnthropic,
+			accountType:    AccountTypeKiro,
+			credentials:    nil,
+			requestedModel: "claude-sonnet-4-6",
+			expected:       true,
+		},
+		{
+			name:           "kiro no mapping rejects model outside default whitelist",
+			platform:       PlatformAnthropic,
+			accountType:    AccountTypeKiro,
+			credentials:    nil,
+			requestedModel: "auto",
+			expected:       false,
 		},
 
 		// 精确匹配
@@ -212,6 +229,7 @@ func TestAccountIsModelSupported(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			account := &Account{
 				Platform:    tt.platform,
+				Type:        tt.accountType,
 				Credentials: tt.credentials,
 			}
 			result := account.IsModelSupported(tt.requestedModel)
@@ -226,6 +244,7 @@ func TestAccountGetMappedModel(t *testing.T) {
 	tests := []struct {
 		name           string
 		platform       string
+		accountType    string
 		credentials    map[string]any
 		requestedModel string
 		expected       string
@@ -243,6 +262,14 @@ func TestAccountGetMappedModel(t *testing.T) {
 			credentials:    nil,
 			requestedModel: "gemini-3.1-pro-preview-customtools",
 			expected:       "gemini-3.1-pro-preview-customtools",
+		},
+		{
+			name:           "kiro no mapping uses default upstream mapping",
+			platform:       PlatformAnthropic,
+			accountType:    AccountTypeKiro,
+			credentials:    nil,
+			requestedModel: "claude-sonnet-4-6",
+			expected:       "claude-sonnet-4.6",
 		},
 
 		// 精确匹配
@@ -310,6 +337,7 @@ func TestAccountGetMappedModel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			account := &Account{
 				Platform:    tt.platform,
+				Type:        tt.accountType,
 				Credentials: tt.credentials,
 			}
 			result := account.GetMappedModel(tt.requestedModel)
