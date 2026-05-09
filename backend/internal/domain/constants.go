@@ -22,6 +22,7 @@ const (
 	PlatformOpenAI      = "openai"
 	PlatformGemini      = "gemini"
 	PlatformAntigravity = "antigravity"
+	PlatformKiro        = "kiro"
 )
 
 // Account type constants
@@ -29,6 +30,7 @@ const (
 	AccountTypeOAuth          = "oauth"           // OAuth类型账号（full scope: profile + inference）
 	AccountTypeSetupToken     = "setup-token"     // Setup Token类型账号（inference only scope）
 	AccountTypeAPIKey         = "apikey"          // API Key类型账号
+	AccountTypeKiro           = "kiro"            // Kiro 类型账号（归属 Anthropic 平台，使用 Kiro OAuth/IDC 凭证）
 	AccountTypeUpstream       = "upstream"        // 上游透传类型账号（通过 Base URL + API Key 连接上游）
 	AccountTypeBedrock        = "bedrock"         // AWS Bedrock 类型账号（通过 SigV4 签名或 API Key 连接 Bedrock，由 credentials.auth_mode 区分）
 	AccountTypeServiceAccount = "service_account" // Google Service Account 类型账号（用于 Vertex AI）
@@ -116,6 +118,27 @@ var DefaultAntigravityModelMapping = map[string]string{
 	// 其他官方模型
 	"gpt-oss-120b-medium":    "gpt-oss-120b-medium",
 	"tab_flash_lite_preview": "tab_flash_lite_preview",
+}
+
+// DefaultKiroModelMapping 是 Kiro 平台的默认模型映射。
+// 键为对外暴露/允许请求的模型名，值为实际发送到 Kiro 上游的模型名。
+var DefaultKiroModelMapping = map[string]string{
+	"claude-opus-4-8":                     "claude-opus-4.8",
+	"claude-opus-4-8-thinking":            "claude-opus-4.8",
+	"claude-opus-4-7":                     "claude-opus-4.7",
+	"claude-opus-4-7-thinking":            "claude-opus-4.7",
+	"claude-opus-4-6":                     "claude-opus-4.6",
+	"claude-opus-4-6-thinking":            "claude-opus-4.6",
+	"claude-sonnet-4-6":                   "claude-sonnet-4.6",
+	"claude-sonnet-4-6-thinking":          "claude-sonnet-4.6",
+	"claude-opus-4-5-20251101":            "claude-opus-4.5",
+	"claude-opus-4-5-20251101-thinking":   "claude-opus-4.5",
+	"claude-sonnet-4-5-20250929":          "claude-sonnet-4.5",
+	"claude-sonnet-4-5-20250929-thinking": "claude-sonnet-4.5",
+	"claude-haiku-4-5":                    "claude-haiku-4.5",
+	"claude-haiku-4-5-thinking":           "claude-haiku-4.5",
+	"claude-haiku-4-5-20251001":           "claude-haiku-4.5",
+	"claude-haiku-4-5-20251001-thinking":  "claude-haiku-4.5",
 }
 
 // DefaultBedrockModelMapping 是 AWS Bedrock 平台的默认模型映射
