@@ -234,6 +234,7 @@
               <div class="flex flex-wrap items-center gap-1">
                 <PlatformTypeBadge :platform="row.platform" :type="row.type"
                   :plan-type="row.credentials?.plan_type || row.parent_plan_type"
+                  :overages-enabled="isKiroOveragesEnabled(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
                   :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
                 <span
@@ -291,6 +292,7 @@
               :today-stats="todayStatsByAccountId[String(row.id)] ?? null"
               :today-stats-loading="todayStatsLoading"
               :manual-refresh-token="usageManualRefreshToken"
+              @kiro-usage-meta="handleKiroUsageMeta(row, $event)"
             />
           </template>
           <template #cell-proxy="{ row }">
@@ -446,6 +448,8 @@ import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, Admi
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+
+const isKiroAccount = (account: Account) => account.platform === 'anthropic' && account.type === 'kiro'
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
@@ -908,10 +912,29 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
     current.schedulable !== next.schedulable ||
     current.status !== next.status ||
     current.rate_limit_reset_at !== next.rate_limit_reset_at ||
+    current.kiro_quota_state !== next.kiro_quota_state ||
+    current.kiro_quota_reason !== next.kiro_quota_reason ||
+    current.kiro_quota_reset_at !== next.kiro_quota_reset_at ||
+    current.kiro_runtime_state !== next.kiro_runtime_state ||
+    current.kiro_runtime_reason !== next.kiro_runtime_reason ||
+    current.kiro_runtime_reset_at !== next.kiro_runtime_reset_at ||
     current.overload_until !== next.overload_until ||
     current.temp_unschedulable_until !== next.temp_unschedulable_until ||
     buildOpenAIUsageRefreshKey(current) !== buildOpenAIUsageRefreshKey(next)
   )
+}
+
+const isKiroOveragesEnabled = (account: Account) => {
+  return isKiroAccount(account) && account.credentials?.kiro_overages_enabled === true
+}
+
+const handleKiroUsageMeta = (account: Account, meta: { plan_type?: string; kiro_overages_enabled: boolean }) => {
+  if (!isKiroAccount(account)) return
+  account.credentials = {
+    ...(account.credentials || {}),
+    ...(meta.plan_type ? { plan_type: meta.plan_type } : {}),
+    kiro_overages_enabled: meta.kiro_overages_enabled
+  }
 }
 
 const syncAccountRefs = (nextAccount: Account) => {
@@ -1450,7 +1473,13 @@ const accountMatchesCurrentFilters = (account: Account) => {
   if (filters.status) {
     const now = Date.now()
     const rateLimitResetAt = account.rate_limit_reset_at ? new Date(account.rate_limit_reset_at).getTime() : Number.NaN
-    const isRateLimited = Number.isFinite(rateLimitResetAt) && rateLimitResetAt > now
+    const kiroRuntimeResetAt = account.kiro_runtime_reset_at ? new Date(account.kiro_runtime_reset_at).getTime() : Number.NaN
+    const isKiroRuntimeLimited =
+      isKiroAccount(account) &&
+      account.kiro_runtime_state === 'cooldown' &&
+      Number.isFinite(kiroRuntimeResetAt) &&
+      kiroRuntimeResetAt > now
+    const isRateLimited = (Number.isFinite(rateLimitResetAt) && rateLimitResetAt > now) || isKiroRuntimeLimited
     const tempUnschedUntil = account.temp_unschedulable_until ? new Date(account.temp_unschedulable_until).getTime() : Number.NaN
     const isTempUnschedulable = Number.isFinite(tempUnschedUntil) && tempUnschedUntil > now
 
