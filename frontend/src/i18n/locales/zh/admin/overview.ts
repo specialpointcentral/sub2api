@@ -877,6 +877,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        kiro: 'Kiro',
       },
       saving: '保存中...',
       noGroups: '暂无分组',
