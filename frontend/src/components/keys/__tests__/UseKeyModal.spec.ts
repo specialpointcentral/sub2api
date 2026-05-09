@@ -796,7 +796,7 @@ describe('UseKeyModal', () => {
     )
   })
 
-  it.each(['anthropic', 'gemini', 'antigravity', 'kimi', 'zhipu'] as const)(
+  it.each(['anthropic', 'gemini', 'antigravity', 'kimi', 'zhipu', 'kiro'] as const)(
     'offers Codex catalog configuration for the %s routed group',
     async (platform) => {
       const wrapper = mount(UseKeyModal, {
@@ -832,6 +832,10 @@ describe('UseKeyModal', () => {
       expect(config).toContain('model_catalog_json = "~/.codex/codex-models.json"')
       expect(config).toContain('base_url = "https://example.com/v1"')
       expect(config).toContain('wire_api = "responses"')
+      if (platform === 'kiro') {
+        expect(config).toContain('name = "Sub2API Kiro"')
+        expect(config).toContain('model = "claude-sonnet-4-6"')
+      }
     }
   )
 

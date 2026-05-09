@@ -380,6 +380,14 @@ type OpsUpstreamErrorEvent struct {
 	// bounds forced earlier attempts of the same request to be discarded.
 	DroppedEarlierAttempts int `json:"dropped_earlier_attempts,omitempty"`
 
+	// Model diagnostics.
+	RequestedModel      string `json:"requested_model,omitempty"`
+	MappedModel         string `json:"mapped_model,omitempty"`
+	KiroModelID         string `json:"kiro_model_id,omitempty"`
+	HasTools            bool   `json:"has_tools,omitempty"`
+	HasAdaptiveThinking bool   `json:"has_adaptive_thinking,omitempty"`
+	HasContext1MBeta    bool   `json:"has_context_1m_beta,omitempty"`
+
 	// Outcome
 	UpstreamStatusCode int    `json:"upstream_status_code,omitempty"`
 	UpstreamRequestID  string `json:"upstream_request_id,omitempty"`
