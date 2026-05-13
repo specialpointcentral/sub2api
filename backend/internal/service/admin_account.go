@@ -434,6 +434,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		if err := ValidateQuotaResetConfig(account.Extra); err != nil {
 			return nil, err
 		}
+		NormalizeExpiredFixedQuotaWindows(account.Extra)
 		ComputeQuotaResetAt(account.Extra)
 		NormalizeFixedQuotaWindows(account.Extra)
 	}
@@ -677,6 +678,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err := ValidateQuotaResetConfig(account.Extra); err != nil {
 			return nil, err
 		}
+		NormalizeExpiredFixedQuotaWindows(account.Extra)
 		ComputeQuotaResetAt(account.Extra)
 		NormalizeFixedQuotaWindows(account.Extra)
 	}
