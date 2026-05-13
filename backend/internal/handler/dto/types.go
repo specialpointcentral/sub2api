@@ -240,6 +240,7 @@ type Account struct {
 	CustomBaseURL        *string `json:"custom_base_url,omitempty"`
 
 	// API Key 账号配额限制
+	QuotaExceeded    bool     `json:"quota_exceeded"`
 	QuotaLimit       *float64 `json:"quota_limit,omitempty"`
 	QuotaUsed        *float64 `json:"quota_used,omitempty"`
 	QuotaDailyLimit  *float64 `json:"quota_daily_limit,omitempty"`
