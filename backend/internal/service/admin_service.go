@@ -2395,6 +2395,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		if err := ValidateQuotaResetConfig(account.Extra); err != nil {
 			return nil, err
 		}
+		NormalizeExpiredFixedQuotaWindows(account.Extra)
 		ComputeQuotaResetAt(account.Extra)
 	}
 	if input.ExpiresAt != nil && *input.ExpiresAt > 0 {
@@ -2506,6 +2507,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err := ValidateQuotaResetConfig(account.Extra); err != nil {
 			return nil, err
 		}
+		NormalizeExpiredFixedQuotaWindows(account.Extra)
 		ComputeQuotaResetAt(account.Extra)
 	}
 	if input.ProxyID != nil {
