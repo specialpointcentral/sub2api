@@ -2154,7 +2154,13 @@ func (a *Account) isFixedWeeklyPeriodExpired(periodStart time.Time) bool {
 // ComputeQuotaResetAt 根据当前配置计算并填充 extra 中的 quota_daily_reset_at / quota_weekly_reset_at
 // 在保存账号配置时调用
 func ComputeQuotaResetAt(extra map[string]any) {
-	now := time.Now()
+	computeQuotaResetAt(extra, time.Now())
+}
+
+func computeQuotaResetAt(extra map[string]any, now time.Time) {
+	if extra == nil {
+		return
+	}
 	tzName, _ := extra["quota_reset_timezone"].(string)
 	if tzName == "" {
 		tzName = "UTC"
@@ -2196,57 +2202,98 @@ func ComputeQuotaResetAt(extra map[string]any) {
 	}
 }
 
+// NormalizeExpiredFixedQuotaWindows clears expired fixed daily/weekly quota windows
+// before recomputing quota_*_reset_at during account updates.
+func NormalizeExpiredFixedQuotaWindows(extra map[string]any) {
+	normalizeExpiredFixedQuotaWindowsAt(extra, time.Now())
+}
+
 // NormalizeFixedQuotaWindows aligns preserved quota usage with the active fixed reset window.
 //
 // Editing an existing account can switch a daily/weekly quota from rolling to fixed reset
 // while preserving quota_*_used and quota_*_start. If the preserved start belongs to the
 // old rolling window, response mapping treats the usage as expired and the dashboard shows
-// 0 until the next reset. Normalize those stale starts before persisting the edited account.
+// 0 until the next reset. Keep this wrapper for older callers/tests.
 func NormalizeFixedQuotaWindows(extra map[string]any) {
+	normalizeExpiredFixedQuotaWindowsAt(extra, time.Now())
+	normalizeFixedQuotaUsageType(extra)
+}
+
+func normalizeExpiredFixedQuotaWindowsAt(extra map[string]any, now time.Time) {
 	if extra == nil {
 		return
 	}
-	now := time.Now()
+	tz := quotaResetLocation(extra)
+	normalizeExpiredFixedDailyQuotaWindow(extra, tz, now)
+	normalizeExpiredFixedWeeklyQuotaWindow(extra, tz, now)
+}
+
+func quotaResetLocation(extra map[string]any) *time.Location {
 	tzName, _ := extra["quota_reset_timezone"].(string)
 	if tzName == "" {
 		tzName = "UTC"
 	}
 	tz, err := time.LoadLocation(tzName)
 	if err != nil {
-		tz = time.UTC
+		return time.UTC
 	}
+	return tz
+}
 
-	if mode, _ := extra["quota_daily_reset_mode"].(string); mode == "fixed" && parseExtraFloat64(extra["quota_daily_limit"]) > 0 {
-		hour := int(parseExtraFloat64(extra["quota_daily_reset_hour"]))
-		if hour < 0 || hour > 23 {
-			hour = 0
-		}
-		lastReset := lastFixedDailyReset(hour, tz, now)
-		start := parseExtraTime(extra["quota_daily_start"])
-		if start.IsZero() || start.Before(lastReset) {
-			extra["quota_daily_used"] = 0.0
-			extra["quota_daily_start"] = lastReset.UTC().Format(time.RFC3339)
-		}
+func normalizeExpiredFixedDailyQuotaWindow(extra map[string]any, tz *time.Location, now time.Time) {
+	if mode, _ := extra["quota_daily_reset_mode"].(string); mode != "fixed" {
+		return
 	}
+	hour := int(parseExtraFloat64(extra["quota_daily_reset_hour"]))
+	if hour < 0 || hour > 23 {
+		hour = 0
+	}
+	start := parseExtraTime(extra["quota_daily_start"])
+	if start.IsZero() && parseExtraFloat64(extra["quota_daily_used"]) <= 0 {
+		return
+	}
+	lastReset := lastFixedDailyReset(hour, tz, now)
+	if start.IsZero() || start.Before(lastReset) {
+		extra["quota_daily_used"] = 0
+		extra["quota_daily_start"] = lastReset.UTC().Format(time.RFC3339)
+	}
+}
 
-	if mode, _ := extra["quota_weekly_reset_mode"].(string); mode == "fixed" && parseExtraFloat64(extra["quota_weekly_limit"]) > 0 {
-		day := 1
-		if rawDay, ok := extra["quota_weekly_reset_day"]; ok {
-			day = int(parseExtraFloat64(rawDay))
-		}
-		if day < 0 || day > 6 {
-			day = 1
-		}
-		hour := int(parseExtraFloat64(extra["quota_weekly_reset_hour"]))
-		if hour < 0 || hour > 23 {
-			hour = 0
-		}
-		lastReset := lastFixedWeeklyReset(day, hour, tz, now)
-		start := parseExtraTime(extra["quota_weekly_start"])
-		if start.IsZero() || start.Before(lastReset) {
-			extra["quota_weekly_used"] = 0.0
-			extra["quota_weekly_start"] = lastReset.UTC().Format(time.RFC3339)
-		}
+func normalizeExpiredFixedWeeklyQuotaWindow(extra map[string]any, tz *time.Location, now time.Time) {
+	if mode, _ := extra["quota_weekly_reset_mode"].(string); mode != "fixed" {
+		return
+	}
+	day := 1
+	if d, ok := extra["quota_weekly_reset_day"]; ok {
+		day = int(parseExtraFloat64(d))
+	}
+	if day < 0 || day > 6 {
+		day = 1
+	}
+	hour := int(parseExtraFloat64(extra["quota_weekly_reset_hour"]))
+	if hour < 0 || hour > 23 {
+		hour = 0
+	}
+	start := parseExtraTime(extra["quota_weekly_start"])
+	if start.IsZero() && parseExtraFloat64(extra["quota_weekly_used"]) <= 0 {
+		return
+	}
+	lastReset := lastFixedWeeklyReset(day, hour, tz, now)
+	if start.IsZero() || start.Before(lastReset) {
+		extra["quota_weekly_used"] = 0
+		extra["quota_weekly_start"] = lastReset.UTC().Format(time.RFC3339)
+	}
+}
+
+func normalizeFixedQuotaUsageType(extra map[string]any) {
+	if extra == nil {
+		return
+	}
+	if v, ok := extra["quota_daily_used"]; ok && parseExtraFloat64(v) == 0 {
+		extra["quota_daily_used"] = 0.0
+	}
+	if v, ok := extra["quota_weekly_used"]; ok && parseExtraFloat64(v) == 0 {
+		extra["quota_weekly_used"] = 0.0
 	}
 }
 
@@ -2310,7 +2357,7 @@ func isPeriodExpired(periodStart time.Time, dur time.Duration) bool {
 	return time.Since(periodStart) >= dur
 }
 
-// IsDailyQuotaPeriodExpired 检查日配额周期是否已过期（用于显示层判断是否需要将 used 归零）
+// IsDailyQuotaPeriodExpired 检查日配额周期是否已过期。
 func (a *Account) IsDailyQuotaPeriodExpired() bool {
 	start := a.getExtraTime("quota_daily_start")
 	if a.GetQuotaDailyResetMode() == "fixed" {
@@ -2319,7 +2366,7 @@ func (a *Account) IsDailyQuotaPeriodExpired() bool {
 	return isPeriodExpired(start, 24*time.Hour)
 }
 
-// IsWeeklyQuotaPeriodExpired 检查周配额周期是否已过期（用于显示层判断是否需要将 used 归零）
+// IsWeeklyQuotaPeriodExpired 检查周配额周期是否已过期。
 func (a *Account) IsWeeklyQuotaPeriodExpired() bool {
 	start := a.getExtraTime("quota_weekly_start")
 	if a.GetQuotaWeeklyResetMode() == "fixed" {
@@ -2579,7 +2626,14 @@ func parseExtraFloat64(value any) float64 {
 }
 
 func parseExtraTime(value any) time.Time {
-	if s, ok := value.(string); ok {
+	switch v := value.(type) {
+	case time.Time:
+		return v
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return time.Time{}
+		}
 		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 			return t
 		}
