@@ -322,6 +322,9 @@ const hasError = computed(() => {
 })
 
 const isQuotaExceeded = computed(() => {
+  if (typeof props.account.quota_exceeded === 'boolean') {
+    return props.account.quota_exceeded
+  }
   const exceeded = (used?: number | null, limit?: number | null) =>
     typeof limit === 'number' && limit > 0 && typeof used === 'number' && used >= limit
   return (
