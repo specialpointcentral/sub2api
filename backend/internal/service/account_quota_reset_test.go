@@ -565,3 +565,63 @@ func TestComputeQuotaResetAt_InvalidHour_ClampedToZero(t *testing.T) {
 	// Invalid hour → clamped to 0
 	assert.Equal(t, 0, resetAt.UTC().Hour())
 }
+
+func TestNormalizeExpiredFixedQuotaWindows_DailyClearsExpiredWindowBeforeResetAtRecompute(t *testing.T) {
+	now := time.Date(2026, 5, 15, 16, 35, 38, 0, time.UTC) // 2026-05-16 00:35:38 Asia/Shanghai
+	extra := map[string]any{
+		"quota_daily_reset_mode": "fixed",
+		"quota_daily_reset_hour": float64(0),
+		"quota_reset_timezone":   "Asia/Shanghai",
+		"quota_daily_limit":      float64(180),
+		"quota_daily_used":       float64(228.510965925),
+		"quota_daily_start":      "2026-05-15T03:15:49.172152Z",
+		"quota_daily_reset_at":   "2026-05-15T16:00:00Z",
+	}
+
+	normalizeExpiredFixedQuotaWindowsAt(extra, now)
+	computeQuotaResetAt(extra, now)
+
+	assert.Equal(t, 0, extra["quota_daily_used"])
+	assert.Equal(t, "2026-05-15T16:00:00Z", extra["quota_daily_start"])
+	assert.Equal(t, "2026-05-16T16:00:00Z", extra["quota_daily_reset_at"])
+}
+
+func TestNormalizeExpiredFixedQuotaWindows_DailyKeepsCurrentWindowUsage(t *testing.T) {
+	now := time.Date(2026, 5, 15, 16, 35, 38, 0, time.UTC) // 2026-05-16 00:35:38 Asia/Shanghai
+	extra := map[string]any{
+		"quota_daily_reset_mode": "fixed",
+		"quota_daily_reset_hour": float64(0),
+		"quota_reset_timezone":   "Asia/Shanghai",
+		"quota_daily_limit":      float64(180),
+		"quota_daily_used":       float64(12.5),
+		"quota_daily_start":      "2026-05-15T16:15:00Z",
+	}
+
+	normalizeExpiredFixedQuotaWindowsAt(extra, now)
+	computeQuotaResetAt(extra, now)
+
+	assert.Equal(t, float64(12.5), extra["quota_daily_used"])
+	assert.Equal(t, "2026-05-15T16:15:00Z", extra["quota_daily_start"])
+	assert.Equal(t, "2026-05-16T16:00:00Z", extra["quota_daily_reset_at"])
+}
+
+func TestNormalizeExpiredFixedQuotaWindows_WeeklyClearsExpiredWindowBeforeResetAtRecompute(t *testing.T) {
+	now := time.Date(2026, 5, 20, 2, 0, 0, 0, time.UTC) // Wednesday
+	extra := map[string]any{
+		"quota_weekly_reset_mode": "fixed",
+		"quota_weekly_reset_day":  float64(1), // Monday
+		"quota_weekly_reset_hour": float64(0),
+		"quota_reset_timezone":    "UTC",
+		"quota_weekly_limit":      float64(500),
+		"quota_weekly_used":       float64(510),
+		"quota_weekly_start":      "2026-05-15T12:00:00Z",
+		"quota_weekly_reset_at":   "2026-05-18T00:00:00Z",
+	}
+
+	normalizeExpiredFixedQuotaWindowsAt(extra, now)
+	computeQuotaResetAt(extra, now)
+
+	assert.Equal(t, 0, extra["quota_weekly_used"])
+	assert.Equal(t, "2026-05-18T00:00:00Z", extra["quota_weekly_start"])
+	assert.Equal(t, "2026-05-25T00:00:00Z", extra["quota_weekly_reset_at"])
+}
