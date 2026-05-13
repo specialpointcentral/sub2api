@@ -303,4 +303,26 @@ describe('AccountStatusIndicator', () => {
     expect(wrapper.text()).toContain('admin.accounts.status.overageExhausted')
     expect(wrapper.text()).toContain('admin.accounts.status.overageExhaustedUntil')
   })
+
+  it('uses explicit backend quota_exceeded=false over legacy quota inference', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          id: 9,
+          type: 'apikey',
+          quota_exceeded: false,
+          quota_daily_limit: 10,
+          quota_daily_used: 10,
+        })
+      },
+      global: {
+        stubs: {
+          Icon: true
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain('admin.accounts.status.active')
+    expect(wrapper.text()).not.toContain('admin.accounts.status.quotaExceeded')
+  })
 })
