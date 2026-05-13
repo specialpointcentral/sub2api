@@ -929,6 +929,7 @@ export interface Account {
   custom_base_url?: string | null
 
   // API Key 账号配额限制
+  quota_exceeded?: boolean | null
   quota_limit?: number | null
   quota_used?: number | null
   quota_daily_limit?: number | null
