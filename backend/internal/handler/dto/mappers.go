@@ -322,6 +322,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 
 	// 提取账号配额限制（apikey / bedrock 类型有效）
 	if a.IsAPIKeyOrBedrock() {
+		out.QuotaExceeded = a.IsQuotaExceeded()
 		if limit := a.GetQuotaLimit(); limit > 0 {
 			out.QuotaLimit = &limit
 			used := a.GetQuotaUsed()
@@ -330,17 +331,11 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		if limit := a.GetQuotaDailyLimit(); limit > 0 {
 			out.QuotaDailyLimit = &limit
 			used := a.GetQuotaDailyUsed()
-			if a.IsDailyQuotaPeriodExpired() {
-				used = 0
-			}
 			out.QuotaDailyUsed = &used
 		}
 		if limit := a.GetQuotaWeeklyLimit(); limit > 0 {
 			out.QuotaWeeklyLimit = &limit
 			used := a.GetQuotaWeeklyUsed()
-			if a.IsWeeklyQuotaPeriodExpired() {
-				used = 0
-			}
 			out.QuotaWeeklyUsed = &used
 		}
 		// 固定时间重置配置
