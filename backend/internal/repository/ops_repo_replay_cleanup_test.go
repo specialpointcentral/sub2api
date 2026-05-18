@@ -2,6 +2,7 @@ package repository
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestOpsErrorLogInsertDoesNotPersistRequestReplayFields(t *testing.T) {
 
 	insertSQL := strings.ToLower(insertOpsErrorLogSQL)
 	for _, column := range disallowedColumns {
-		if strings.Contains(insertSQL, column) {
+		if regexp.MustCompile(`\b` + regexp.QuoteMeta(column) + `\b`).MatchString(insertSQL) {
 			t.Fatalf("ops error log insert still references dropped replay column %q", column)
 		}
 	}
@@ -39,6 +40,32 @@ func TestOpsErrorLogInsertDoesNotPersistRequestReplayFields(t *testing.T) {
 	for _, field := range disallowedFields {
 		if _, ok := inputType.FieldByName(field); ok {
 			t.Fatalf("OpsInsertErrorLogInput still carries replay field %q", field)
+		}
+	}
+}
+
+func TestOpsErrorLogInsertPersistsRequestBodyPreviewFields(t *testing.T) {
+	insertSQL := strings.ToLower(insertOpsErrorLogSQL)
+	requiredColumns := []string{
+		"request_body_preview",
+		"request_body_preview_truncated",
+		"request_body_preview_bytes",
+	}
+	for _, column := range requiredColumns {
+		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(column) + `\b`).MatchString(insertSQL) {
+			t.Fatalf("ops error log insert should include debug preview column %q", column)
+		}
+	}
+
+	inputType := reflect.TypeOf(service.OpsInsertErrorLogInput{})
+	requiredFields := []string{
+		"RequestBodyPreview",
+		"RequestBodyPreviewTruncated",
+		"RequestBodyPreviewBytes",
+	}
+	for _, field := range requiredFields {
+		if _, ok := inputType.FieldByName(field); !ok {
+			t.Fatalf("OpsInsertErrorLogInput should carry debug preview field %q", field)
 		}
 	}
 }
