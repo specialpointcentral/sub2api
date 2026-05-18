@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,36 @@ func TestSanitizeAndTrimJSONPayload_PreservesTokenBudgetFields(t *testing.T) {
 
 	if got := decoded["access_token"]; got != "[REDACTED]" {
 		t.Fatalf("expected access_token to be redacted, got %#v", got)
+	}
+}
+
+func TestBuildOpsRequestBodyPreview_RedactsCredentialsAndKeepsDebugFields(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"gpt-5.3","max_tokens":64,"access_token":"secret-token","messages":[{"role":"user","content":"debug this failure"}]}`)
+
+	preview, truncated, bytesLen := BuildOpsRequestBodyPreview(body)
+
+	if preview == "" {
+		t.Fatal("expected request body preview")
+	}
+	if truncated {
+		t.Fatal("small request body should not be marked truncated")
+	}
+	if bytesLen == nil || *bytesLen != len(body) {
+		t.Fatalf("expected original byte size %d, got %#v", len(body), bytesLen)
+	}
+	if !strings.Contains(preview, `"model":"gpt-5.3"`) {
+		t.Fatalf("expected model in preview, got %s", preview)
+	}
+	if !strings.Contains(preview, `"max_tokens":64`) {
+		t.Fatalf("expected token budget in preview, got %s", preview)
+	}
+	if strings.Contains(preview, "secret-token") {
+		t.Fatalf("expected credentials redacted, got %s", preview)
+	}
+	if !strings.Contains(preview, `"[REDACTED]"`) {
+		t.Fatalf("expected redaction marker, got %s", preview)
 	}
 }
 

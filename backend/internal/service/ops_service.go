@@ -16,7 +16,8 @@ import (
 var ErrOpsDisabled = infraerrors.NotFound("OPS_DISABLED", "Ops monitoring is disabled")
 
 const (
-	opsMaxStoredErrorBodyBytes = 20 * 1024
+	opsMaxStoredErrorBodyBytes          = 20 * 1024
+	opsMaxStoredRequestBodyPreviewBytes = 256 * 1024
 )
 
 // OpsService provides ingestion and query APIs for the Ops monitoring module.
@@ -226,6 +227,14 @@ func (s *OpsService) prepareErrorLogInput(ctx context.Context, entry *OpsInsertE
 	if strings.TrimSpace(entry.ErrorBody) != "" {
 		sanitized, _ := sanitizeErrorBodyForStorage(entry.ErrorBody, opsMaxStoredErrorBodyBytes)
 		entry.ErrorBody = sanitized
+	}
+	if strings.TrimSpace(entry.RequestBodyPreview) != "" {
+		sanitized, truncated := sanitizeRequestBodyPreviewForStorage(entry.RequestBodyPreview)
+		entry.RequestBodyPreview = sanitized
+		entry.RequestBodyPreviewTruncated = entry.RequestBodyPreviewTruncated || truncated
+	}
+	if entry.RequestBodyPreviewBytes != nil && *entry.RequestBodyPreviewBytes < 0 {
+		entry.RequestBodyPreviewBytes = nil
 	}
 
 	// Sanitize upstream error context if provided by gateway services.
@@ -527,6 +536,54 @@ func sanitizeAndTrimJSONPayload(raw []byte, maxBytes int) (jsonString string, tr
 		return "", true, bytesLen
 	}
 	return string(encoded4), true, bytesLen
+}
+
+func BuildOpsRequestBodyPreview(raw []byte) (preview string, truncated bool, bytesLen *int) {
+	if len(raw) == 0 {
+		return "", false, nil
+	}
+	n := len(raw)
+	bytesLen = &n
+
+	if looksLikeJSONPayload(raw) {
+		if out, trunc, _ := sanitizeAndTrimJSONPayload(raw, opsMaxStoredRequestBodyPreviewBytes); out != "" {
+			return out, trunc, bytesLen
+		}
+	}
+
+	textBytes := raw
+	truncated = false
+	if len(textBytes) > opsMaxStoredRequestBodyPreviewBytes {
+		textBytes = textBytes[:opsMaxStoredRequestBodyPreviewBytes]
+		truncated = true
+	}
+	text := strings.TrimSpace(string(textBytes))
+	if text == "" {
+		return "", truncated, bytesLen
+	}
+	return text, truncated, bytesLen
+}
+
+func looksLikeJSONPayload(raw []byte) bool {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\n', '\r', '\t':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func sanitizeRequestBodyPreviewForStorage(raw string) (preview string, truncated bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	return sanitizeErrorBodyForStorage(raw, opsMaxStoredRequestBodyPreviewBytes)
 }
 
 func redactSensitiveJSON(v any) any {
