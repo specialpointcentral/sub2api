@@ -21,6 +21,9 @@ const (
 	OpsUpstreamErrorDetailKey  = "ops_upstream_error_detail"
 	OpsUpstreamErrorsKey       = "ops_upstream_errors"
 	OpsUpstreamModelKey        = "ops_upstream_model"
+	OpsRequestBodyPreviewKey   = "ops_request_body_preview"
+	OpsRequestBodyTruncatedKey = "ops_request_body_preview_truncated"
+	OpsRequestBodyBytesKey     = "ops_request_body_preview_bytes"
 
 	// Optional stage latencies (milliseconds) for troubleshooting and alerting.
 	OpsAuthLatencyMsKey      = "ops_auth_latency_ms"
@@ -98,6 +101,21 @@ func ClearOpsUpstreamModel(c *gin.Context) {
 		return
 	}
 	c.Set(OpsUpstreamModelKey, "")
+}
+
+func SetOpsRequestBody(c *gin.Context, body []byte) {
+	if c == nil || len(body) == 0 {
+		return
+	}
+	preview, truncated, bytesLen := BuildOpsRequestBodyPreview(body)
+	if strings.TrimSpace(preview) == "" {
+		return
+	}
+	c.Set(OpsRequestBodyPreviewKey, preview)
+	c.Set(OpsRequestBodyTruncatedKey, truncated)
+	if bytesLen != nil {
+		c.Set(OpsRequestBodyBytesKey, *bytesLen)
+	}
 }
 
 func MarkOpsClientBusinessLimited(c *gin.Context, reason string) {
