@@ -5104,6 +5104,7 @@ export default {
         response: 'Response',
         classification: 'Classification',
         errorBody: 'Error Body',
+        requestBody: 'Request Body',
         trimmed: 'trimmed',
         markResolved: 'Mark resolved',
         markUnresolved: 'Mark unresolved',
