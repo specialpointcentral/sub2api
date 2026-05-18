@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,159 @@ func TestSanitizeAndTrimJSONPayload_PreservesTokenBudgetFields(t *testing.T) {
 
 	if got := decoded["access_token"]; got != "[REDACTED]" {
 		t.Fatalf("expected access_token to be redacted, got %#v", got)
+	}
+}
+
+func TestBuildOpsRequestBodyPreview_RedactsCredentialsAndKeepsDebugFields(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"model":"gpt-5.3","max_tokens":64,"access_token":"secret-token","messages":[{"role":"user","content":"debug this failure"}]}`)
+
+	preview, truncated, bytesLen := BuildOpsRequestBodyPreview(body)
+
+	if preview == "" {
+		t.Fatal("expected request body preview")
+	}
+	if truncated {
+		t.Fatal("small request body should not be marked truncated")
+	}
+	if bytesLen == nil || *bytesLen != len(body) {
+		t.Fatalf("expected original byte size %d, got %#v", len(body), bytesLen)
+	}
+	if !strings.Contains(preview, `"model":"gpt-5.3"`) {
+		t.Fatalf("expected model in preview, got %s", preview)
+	}
+	if !strings.Contains(preview, `"max_tokens":64`) {
+		t.Fatalf("expected token budget in preview, got %s", preview)
+	}
+	if strings.Contains(preview, "secret-token") {
+		t.Fatalf("expected credentials redacted, got %s", preview)
+	}
+	if !strings.Contains(preview, `"[REDACTED]"`) {
+		t.Fatalf("expected redaction marker, got %s", preview)
+	}
+}
+
+func TestBuildOpsRequestBodyPreview_TruncatesOversizedSingleMessageContent(t *testing.T) {
+	t.Parallel()
+
+	largeContent := strings.Repeat("debug-context-", opsMaxStoredRequestBodyPreviewBytes)
+	bodyMap := map[string]any{
+		"model":  "gpt-5.5",
+		"stream": true,
+		"messages": []any{
+			map[string]any{
+				"role":    "user",
+				"content": largeContent,
+			},
+		},
+	}
+	raw, err := json.Marshal(bodyMap)
+	if err != nil {
+		t.Fatalf("marshal test body: %v", err)
+	}
+
+	preview, truncated, bytesLen := BuildOpsRequestBodyPreview(raw)
+
+	if !truncated {
+		t.Fatal("expected oversized request body preview to be truncated")
+	}
+	if bytesLen == nil || *bytesLen != len(raw) {
+		t.Fatalf("expected original byte size %d, got %#v", len(raw), bytesLen)
+	}
+	if len(preview) > opsMaxStoredRequestBodyPreviewBytes {
+		t.Fatalf("preview should fit storage cap: got %d bytes", len(preview))
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(preview), &decoded); err != nil {
+		t.Fatalf("preview should remain valid JSON: %v\n%s", err, preview)
+	}
+	msgs, ok := decoded["messages"].([]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("expected one truncated message to remain, got %#v", decoded["messages"])
+	}
+	msg, ok := msgs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected message object, got %#v", msgs[0])
+	}
+	if got := msg["role"]; got != "user" {
+		t.Fatalf("expected role to be preserved, got %#v", got)
+	}
+	content, ok := msg["content"].(string)
+	if !ok {
+		t.Fatalf("expected string content prefix to be preserved, got %#v", msg["content"])
+	}
+	if !strings.HasPrefix(content, "debug-context-debug-context-") {
+		t.Fatalf("expected content prefix to be preserved, got %.80q", content)
+	}
+	if !strings.Contains(content, "truncated") {
+		t.Fatalf("expected truncation marker in content, got %.120q", content)
+	}
+}
+
+func TestBuildOpsRequestBodyPreview_TruncatesOversizedResponsesInputContent(t *testing.T) {
+	t.Parallel()
+
+	largeContent := strings.Repeat("responses-debug-", opsMaxStoredRequestBodyPreviewBytes)
+	bodyMap := map[string]any{
+		"model":  "gpt-5.5",
+		"stream": true,
+		"input": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{
+						"type": "input_text",
+						"text": largeContent,
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(bodyMap)
+	if err != nil {
+		t.Fatalf("marshal test body: %v", err)
+	}
+
+	preview, truncated, _ := BuildOpsRequestBodyPreview(raw)
+
+	if !truncated {
+		t.Fatal("expected oversized request body preview to be truncated")
+	}
+	if len(preview) > opsMaxStoredRequestBodyPreviewBytes {
+		t.Fatalf("preview should fit storage cap: got %d bytes", len(preview))
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(preview), &decoded); err != nil {
+		t.Fatalf("preview should remain valid JSON: %v\n%s", err, preview)
+	}
+	items, ok := decoded["input"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected one truncated input item to remain, got %#v", decoded["input"])
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected input object, got %#v", items[0])
+	}
+	blocks, ok := item["content"].([]any)
+	if !ok || len(blocks) != 1 {
+		t.Fatalf("expected content block to remain, got %#v", item["content"])
+	}
+	block, ok := blocks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected content block object, got %#v", blocks[0])
+	}
+	text, ok := block["text"].(string)
+	if !ok {
+		t.Fatalf("expected text prefix to be preserved, got %#v", block["text"])
+	}
+	if !strings.HasPrefix(text, "responses-debug-responses-debug-") {
+		t.Fatalf("expected input text prefix to be preserved, got %.80q", text)
+	}
+	if !strings.Contains(text, "truncated") {
+		t.Fatalf("expected truncation marker in text, got %.120q", text)
 	}
 }
 
