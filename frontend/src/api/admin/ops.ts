@@ -943,6 +943,9 @@ export interface OpsErrorLog {
 
 export interface OpsErrorDetail extends OpsErrorLog {
   error_body: string
+  request_body?: string
+  request_body_truncated?: boolean
+  request_body_bytes?: number | null
 
   // Upstream context (optional; enriched by gateway services)
   upstream_status_code?: number | null

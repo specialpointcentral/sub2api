@@ -179,6 +179,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		googleError(c, http.StatusBadRequest, "Failed to read request body")
 		return
 	}
+	service.SetOpsRequestBody(c, body)
 	if len(body) == 0 {
 		googleError(c, http.StatusBadRequest, "Request body is empty")
 		return

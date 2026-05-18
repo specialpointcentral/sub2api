@@ -363,6 +363,7 @@ export default {
         response: '响应',
         classification: '错误分类',
         errorBody: '错误体',
+        requestBody: '请求体',
         trimmed: '已截断',
         markResolved: '标记已解决',
         markUnresolved: '标记未解决',
