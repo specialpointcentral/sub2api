@@ -34,7 +34,7 @@ describe('OpsErrorDetailModal', () => {
     mocks.listRequestErrorUpstreamErrors.mockResolvedValue({ items: [] })
   })
 
-  it('prioritizes upstream root cause and deduplicates diagnostic payloads', async () => {
+  it('prioritizes upstream root cause, renders the request body, and deduplicates diagnostic payloads', async () => {
     mocks.getRequestErrorDetail.mockResolvedValue({
       id: 1,
       created_at: '2026-08-19T00:00:00Z',
@@ -54,6 +54,7 @@ describe('OpsErrorDetailModal', () => {
       upstream_error_message: 'provider rate limit exhausted',
       upstream_error_detail: '{"error":"same"}',
       upstream_errors: '[]',
+      request_body: '{"prompt":"hello"}',
       account_name: 'account',
       group_name: 'group',
       is_business_limited: false
@@ -73,7 +74,10 @@ describe('OpsErrorDetailModal', () => {
     expect(wrapper.text()).toContain('provider rate limit exhausted')
     expect(wrapper.text()).toContain('admin.ops.errorDetail.upstreamStatus')
     expect(wrapper.text()).toContain('429')
-    expect(wrapper.findAll('pre')).toHaveLength(2)
+    const payloadPreviews = wrapper.findAll('pre')
+    expect(payloadPreviews).toHaveLength(3)
+    expect(wrapper.text()).toContain('admin.ops.errorDetail.requestBody')
+    expect(payloadPreviews[0].text()).toContain('"prompt": "hello"')
     expect(wrapper.text()).not.toContain('admin.ops.errorDetail.payloads.upstream_detail')
   })
 })
