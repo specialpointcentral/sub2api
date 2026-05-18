@@ -106,6 +106,10 @@ type OpsInsertErrorLogInput struct {
 	ErrorMessage string
 	ErrorBody    string
 
+	RequestBodyPreview          string
+	RequestBodyPreviewTruncated bool
+	RequestBodyPreviewBytes     *int
+
 	ErrorSource string
 	ErrorOwner  string
 
