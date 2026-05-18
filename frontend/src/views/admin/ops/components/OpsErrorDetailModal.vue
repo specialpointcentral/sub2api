@@ -29,16 +29,16 @@
         </div>
 
         <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
-          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">
-            {{ isUpstreamError(detail) ? t('admin.ops.errorDetail.account') : t('admin.ops.errorDetail.user') }}
-          </div>
+          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.user') }}</div>
           <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
-            <template v-if="isUpstreamError(detail)">
-              {{ detail.account_name || (detail.account_id != null ? String(detail.account_id) : '—') }}
-            </template>
-            <template v-else>
-              {{ detail.user_email || (detail.user_id != null ? String(detail.user_id) : '—') }}
-            </template>
+            {{ detail.user_email || (detail.user_id != null ? String(detail.user_id) : '—') }}
+          </div>
+        </div>
+
+        <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
+          <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.account') }}</div>
+          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">
+            {{ detail.account_name || (detail.account_id != null ? String(detail.account_id) : '—') }}
           </div>
         </div>
 
@@ -131,6 +131,23 @@
             </span>
           </div>
         </div>
+      </div>
+
+      <!-- Request content -->
+      <div class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetail.requestBody') }}</h3>
+          <div class="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+            <span v-if="detail.request_body_bytes != null">{{ detail.request_body_bytes }} bytes</span>
+            <span
+              v-if="detail.request_body_truncated"
+              class="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+            >
+              {{ t('admin.ops.errorDetail.trimmed') }}
+            </span>
+          </div>
+        </div>
+        <pre class="mt-4 max-h-[520px] overflow-auto rounded-xl border border-gray-200 bg-white p-4 text-xs text-gray-800 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-100"><code>{{ prettyJSON(detail.request_body || '') }}</code></pre>
       </div>
 
       <!-- Response content (client request -> error_body; upstream -> upstream_error_detail/message) -->
@@ -258,13 +275,6 @@ const title = computed(() => {
 })
 
 const emptyText = computed(() => t('admin.ops.errorDetail.noErrorSelected'))
-
-function isUpstreamError(d: OpsErrorDetail | null): boolean {
-  if (!d) return false
-  const phase = String(d.phase || '').toLowerCase()
-  const owner = String(d.error_owner || '').toLowerCase()
-  return phase === 'upstream' && owner === 'provider'
-}
 
 function formatRequestTypeLabel(type: number | null | undefined): string {
   switch (type) {

@@ -16,7 +16,9 @@ import (
 var ErrOpsDisabled = infraerrors.NotFound("OPS_DISABLED", "Ops monitoring is disabled")
 
 const (
-	opsMaxStoredErrorBodyBytes = 20 * 1024
+	opsMaxStoredErrorBodyBytes          = 20 * 1024
+	opsMaxStoredRequestBodyPreviewBytes = 256 * 1024
+	opsMaxRequestBodyPreviewTextBytes   = 32 * 1024
 )
 
 // OpsService provides ingestion and query APIs for the Ops monitoring module.
@@ -226,6 +228,14 @@ func (s *OpsService) prepareErrorLogInput(ctx context.Context, entry *OpsInsertE
 	if strings.TrimSpace(entry.ErrorBody) != "" {
 		sanitized, _ := sanitizeErrorBodyForStorage(entry.ErrorBody, opsMaxStoredErrorBodyBytes)
 		entry.ErrorBody = sanitized
+	}
+	if strings.TrimSpace(entry.RequestBodyPreview) != "" {
+		sanitized, truncated := sanitizeRequestBodyPreviewForStorage(entry.RequestBodyPreview)
+		entry.RequestBodyPreview = sanitized
+		entry.RequestBodyPreviewTruncated = entry.RequestBodyPreviewTruncated || truncated
+	}
+	if entry.RequestBodyPreviewBytes != nil && *entry.RequestBodyPreviewBytes < 0 {
+		entry.RequestBodyPreviewBytes = nil
 	}
 
 	// Sanitize upstream error context if provided by gateway services.
@@ -481,6 +491,19 @@ func sanitizeAndTrimJSONPayload(raw []byte, maxBytes int) (jsonString string, tr
 
 	// Trim conversation history to keep the most recent context.
 	if root, ok := decoded.(map[string]any); ok {
+		textTrimmed := false
+		if compacted, ok := compactOversizedJSONStrings(root, opsMaxRequestBodyPreviewTextBytes).(map[string]any); ok {
+			encodedText, errText := json.Marshal(compacted)
+			if errText == nil {
+				if len(encodedText) <= maxBytes {
+					return string(encodedText), true, bytesLen
+				}
+				decoded = compacted
+				root = compacted
+				textTrimmed = true
+			}
+		}
+
 		if trimmed, ok := trimConversationArrays(root, maxBytes); ok {
 			encoded2, err2 := json.Marshal(trimmed)
 			if err2 == nil && len(encoded2) <= maxBytes {
@@ -488,9 +511,13 @@ func sanitizeAndTrimJSONPayload(raw []byte, maxBytes int) (jsonString string, tr
 			}
 			// Fallthrough: keep shrinking.
 			decoded = trimmed
+			root = trimmed
 		}
 
 		essential := shrinkToEssentials(root)
+		if textTrimmed {
+			essential["payload_truncated"] = true
+		}
 		encoded3, err3 := json.Marshal(essential)
 		if err3 == nil && len(encoded3) <= maxBytes {
 			return string(encoded3), true, bytesLen
@@ -529,6 +556,54 @@ func sanitizeAndTrimJSONPayload(raw []byte, maxBytes int) (jsonString string, tr
 		return "", true, bytesLen
 	}
 	return string(encoded4), true, bytesLen
+}
+
+func BuildOpsRequestBodyPreview(raw []byte) (preview string, truncated bool, bytesLen *int) {
+	if len(raw) == 0 {
+		return "", false, nil
+	}
+	n := len(raw)
+	bytesLen = &n
+
+	if looksLikeJSONPayload(raw) {
+		if out, trunc, _ := sanitizeAndTrimJSONPayload(raw, opsMaxStoredRequestBodyPreviewBytes); out != "" {
+			return out, trunc, bytesLen
+		}
+	}
+
+	textBytes := raw
+	truncated = false
+	if len(textBytes) > opsMaxStoredRequestBodyPreviewBytes {
+		textBytes = textBytes[:opsMaxStoredRequestBodyPreviewBytes]
+		truncated = true
+	}
+	text := strings.TrimSpace(string(textBytes))
+	if text == "" {
+		return "", truncated, bytesLen
+	}
+	return text, truncated, bytesLen
+}
+
+func looksLikeJSONPayload(raw []byte) bool {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\n', '\r', '\t':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func sanitizeRequestBodyPreviewForStorage(raw string) (preview string, truncated bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	return sanitizeErrorBodyForStorage(raw, opsMaxStoredRequestBodyPreviewBytes)
 }
 
 func redactSensitiveJSON(v any) any {
@@ -652,11 +727,14 @@ func isSensitiveKey(key string) bool {
 }
 
 func trimConversationArrays(root map[string]any, maxBytes int) (map[string]any, bool) {
-	// Supported: anthropic/openai: messages; gemini: contents.
+	// Supported: anthropic/openai: messages; gemini: contents; responses: input.
 	if out, ok := trimArrayField(root, "messages", maxBytes); ok {
 		return out, true
 	}
 	if out, ok := trimArrayField(root, "contents", maxBytes); ok {
+		return out, true
+	}
+	if out, ok := trimArrayField(root, "input", maxBytes); ok {
 		return out, true
 	}
 	return root, false
@@ -750,7 +828,67 @@ func shrinkToEssentials(root map[string]any) map[string]any {
 			out["contents"] = []any{arr[len(arr)-1]}
 		}
 	}
+	if v, ok := root["input"]; ok {
+		if arr, ok := v.([]any); ok && len(arr) > 0 {
+			out["input"] = []any{arr[len(arr)-1]}
+		}
+	}
 	return out
+}
+
+func compactOversizedJSONStrings(v any, maxTextBytes int) any {
+	if maxTextBytes <= 0 {
+		return nil
+	}
+	next, changed := compactOversizedJSONStringsValue(v, maxTextBytes)
+	if !changed {
+		return nil
+	}
+	return next
+}
+
+func compactOversizedJSONStringsValue(v any, maxTextBytes int) (any, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		changed := false
+		for k, vv := range t {
+			next, ok := compactOversizedJSONStringsValue(vv, maxTextBytes)
+			if ok {
+				out[k] = next
+				changed = true
+				continue
+			}
+			out[k] = vv
+		}
+		if changed {
+			return out, true
+		}
+		return v, false
+	case []any:
+		out := make([]any, len(t))
+		changed := false
+		for i, vv := range t {
+			next, ok := compactOversizedJSONStringsValue(vv, maxTextBytes)
+			if ok {
+				out[i] = next
+				changed = true
+				continue
+			}
+			out[i] = vv
+		}
+		if changed {
+			return out, true
+		}
+		return v, false
+	case string:
+		if len(t) <= maxTextBytes {
+			return v, false
+		}
+		return truncateString(t, maxTextBytes) + "... (truncated)", true
+	default:
+		return v, false
+	}
 }
 
 func shallowCopyMap(m map[string]any) map[string]any {
