@@ -271,6 +271,35 @@ func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLo
 	}
 }
 
+func applyOpsRequestBodyPreviewFromContext(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if c == nil || entry == nil {
+		return
+	}
+	if v, ok := c.Get(service.OpsRequestBodyPreviewKey); ok {
+		if s, ok := v.(string); ok {
+			entry.RequestBodyPreview = strings.TrimSpace(s)
+		}
+	}
+	if v, ok := c.Get(service.OpsRequestBodyTruncatedKey); ok {
+		if b, ok := v.(bool); ok {
+			entry.RequestBodyPreviewTruncated = b
+		}
+	}
+	if v, ok := c.Get(service.OpsRequestBodyBytesKey); ok {
+		switch n := v.(type) {
+		case int:
+			if n >= 0 {
+				entry.RequestBodyPreviewBytes = &n
+			}
+		case int64:
+			if n >= 0 {
+				v := int(n)
+				entry.RequestBodyPreviewBytes = &v
+			}
+		}
+	}
+}
+
 func StopOpsErrorLogWorkers() bool {
 	opsErrorLogStopOnce.Do(func() {
 		opsErrorLogShutdownOnce.Do(func() {
@@ -850,6 +879,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				CreatedAt: time.Now(),
 			}
 			applyOpsLatencyFieldsFromContext(c, entry)
+			applyOpsRequestBodyPreviewFromContext(c, entry)
 
 			if apiKey != nil {
 				entry.APIKeyID = &apiKey.ID
@@ -987,6 +1017,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			CreatedAt: time.Now(),
 		}
 		applyOpsLatencyFieldsFromContext(c, entry)
+		applyOpsRequestBodyPreviewFromContext(c, entry)
 
 		// Capture upstream error context set by gateway services (if present).
 		// This does NOT affect the client response; it enriches Ops troubleshooting data.

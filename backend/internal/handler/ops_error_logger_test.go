@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -228,6 +229,44 @@ func TestMarkOpsStreamError_FirstWins(t *testing.T) {
 	require.Equal(t, "rate_limit_error", se.ErrType)
 	require.Equal(t, "Concurrency limit exceeded for account", se.Message)
 	require.Equal(t, http.StatusTooManyRequests, se.IntendedStatus)
+}
+
+func TestOpsErrorLoggerMiddleware_EnqueuesRequestBodyPreview(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 1)
+	gin.SetMode(gin.TestMode)
+
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	body := []byte(`{"model":"gpt-5.3","access_token":"secret-token","messages":[{"role":"user","content":"debug this failure"}]}`)
+
+	r := gin.New()
+	r.POST("/v1/messages", OpsErrorLoggerMiddleware(ops), func(c *gin.Context) {
+		service.SetOpsRequestBody(c, body)
+		c.Set(opsModelKey, "gpt-5.3")
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error": gin.H{
+				"type":    "api_error",
+				"message": "upstream failed",
+			},
+		})
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	select {
+	case job := <-opsErrorLogQueue:
+		require.NotNil(t, job.entry)
+		require.Equal(t, "gpt-5.3", job.entry.Model)
+		require.NotEmpty(t, job.entry.RequestBodyPreview)
+		require.Contains(t, job.entry.RequestBodyPreview, `"model":"gpt-5.3"`)
+		require.NotContains(t, job.entry.RequestBodyPreview, "secret-token")
+		require.NotNil(t, job.entry.RequestBodyPreviewBytes)
+		require.Equal(t, len(body), *job.entry.RequestBodyPreviewBytes)
+	case <-time.After(time.Second):
+		t.Fatal("expected queued ops error log")
+	}
 }
 
 func TestIsKnownOpsErrorType(t *testing.T) {
