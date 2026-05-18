@@ -137,7 +137,7 @@
               <td class="px-4 py-2">
                 <el-tooltip v-if="log.user_id" :content="t('admin.ops.errorLog.userId') + ' ' + log.user_id" placement="top" :show-after="500">
                   <span class="block max-w-[140px] truncate text-xs font-medium text-gray-900 dark:text-gray-200">
-                    {{ log.user_email || '-' }}
+                    {{ log.user_email || log.user_id }}
                   </span>
                 </el-tooltip>
                 <span v-else class="text-xs text-gray-400">-</span>
@@ -163,7 +163,7 @@
               <td class="px-4 py-2">
                 <el-tooltip v-if="log.account_id" :content="t('admin.ops.errorLog.accountId') + ' ' + log.account_id" placement="top" :show-after="500">
                   <span class="block max-w-[120px] truncate text-xs font-medium text-gray-900 dark:text-gray-200">
-                    {{ log.account_name || '-' }}
+                    {{ log.account_name || log.account_id }}
                   </span>
                 </el-tooltip>
                 <span v-else class="text-xs text-gray-400">-</span>
