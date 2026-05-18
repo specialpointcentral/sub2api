@@ -4628,7 +4628,7 @@ export default {
       upstreamErrors: '上游错误',
       errorCountExcl429529: '错误数（排除429/529）',
       sla: 'SLA（排除业务限制）',
-      businessLimited: '业务限制：',
+      businessLimited: '业务限制',
       errors: '错误',
       errorRate: '错误率：',
       upstreamRate: '上游错误率：',
