@@ -269,6 +269,35 @@ func normalizeOpsPersistentUserAgent(value string) string {
 	return truncateString(strings.TrimSpace(strings.ToValidUTF8(value, "")), opsErrorLogMaxUserAgentBytes)
 }
 
+func applyOpsRequestBodyPreviewFromContext(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if c == nil || entry == nil {
+		return
+	}
+	if v, ok := c.Get(service.OpsRequestBodyPreviewKey); ok {
+		if s, ok := v.(string); ok {
+			entry.RequestBodyPreview = strings.TrimSpace(s)
+		}
+	}
+	if v, ok := c.Get(service.OpsRequestBodyTruncatedKey); ok {
+		if b, ok := v.(bool); ok {
+			entry.RequestBodyPreviewTruncated = b
+		}
+	}
+	if v, ok := c.Get(service.OpsRequestBodyBytesKey); ok {
+		switch n := v.(type) {
+		case int:
+			if n >= 0 {
+				entry.RequestBodyPreviewBytes = &n
+			}
+		case int64:
+			if n >= 0 {
+				v := int(n)
+				entry.RequestBodyPreviewBytes = &v
+			}
+		}
+	}
+}
+
 func StopOpsErrorLogWorkers() bool {
 	opsErrorLogStopOnce.Do(func() {
 		opsErrorLogShutdownOnce.Do(func() {
@@ -1235,6 +1264,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			CreatedAt: time.Now(),
 		}
 		applyOpsLatencyFieldsFromContext(c, entry)
+		applyOpsRequestBodyPreviewFromContext(c, entry)
 		applyOpsUpstreamFieldsFromContext(c, entry)
 		if parsed.StreamFailure {
 			if message := strings.TrimSpace(parsed.Message); message != "" {
@@ -1385,6 +1415,7 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 		entry.ClientIP = &clientIP
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
+	applyOpsRequestBodyPreviewFromContext(c, entry)
 	enqueueOpsErrorLog(ops, entry)
 }
 
