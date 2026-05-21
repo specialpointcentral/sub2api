@@ -3827,6 +3827,9 @@ export default {
       errorCodeExists: '该错误码已被选中',
       interceptWarmupRequests: '拦截预热请求',
       interceptWarmupRequestsDesc: '启用后，标题生成等预热请求将返回 mock 响应，不消耗上游 token',
+      stripBillingHeader: '删除 Billing Header',
+      stripBillingHeaderDesc:
+        '启用后，转发前会删除 system 中以 x-anthropic-billing-header 开头的文本行，避免动态 cch 影响缓存命中',
       autoPauseOnExpired: '过期自动暂停调度',
       autoPauseOnExpiredDesc: '启用后，账号过期将自动暂停调度',
 	  autoPause5hThreshold: '5h 用量阈值(%)',
