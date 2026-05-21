@@ -2543,7 +2543,7 @@
       <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
       <div
         v-if="form.platform === 'anthropic' || form.platform === 'antigravity'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
           <div>
@@ -2566,6 +2566,31 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 interceptWarmupRequests ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{
+              t('admin.accounts.stripBillingHeader')
+            }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.stripBillingHeaderDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="stripBillingHeader = !stripBillingHeader"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              stripBillingHeader ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                stripBillingHeader ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -3782,6 +3807,7 @@ import {
   applyAntigravityProjectID,
   applyHeaderOverride,
   applyInterceptWarmup,
+  applyStripBillingHeader,
   getHeaderOverrideTemplate,
   isHeaderOverridePlatform,
   validateHeaderOverrideRows,
@@ -4006,6 +4032,7 @@ const fillHeaderOverrideTemplate = () => {
   headerOverrideRows.value = rows
 }
 const interceptWarmupRequests = ref(false)
+const stripBillingHeader = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
@@ -4510,6 +4537,7 @@ watch(
     // Reset Anthropic/Antigravity-specific settings when switching to other platforms
     if (newPlatform !== 'anthropic' && newPlatform !== 'antigravity') {
       interceptWarmupRequests.value = false
+      stripBillingHeader.value = false
     }
     if (newPlatform !== 'openai') {
       openaiPassthroughEnabled.value = false
@@ -4794,6 +4822,14 @@ const applyTempUnschedConfig = (credentials: Record<string, unknown>) => {
   return true
 }
 
+const applyRequestMutationToggles = (
+  credentials: Record<string, unknown>,
+  mode: 'create' | 'edit'
+) => {
+  applyInterceptWarmup(credentials, interceptWarmupRequests.value, mode)
+  applyStripBillingHeader(credentials, stripBillingHeader.value, mode)
+}
+
 const splitTempUnschedKeywords = (value: string) => {
   return value
     .split(/[,;]/)
@@ -4958,6 +4994,7 @@ const resetForm = () => {
   headerOverrideEnabled.value = false
   headerOverrideRows.value = []
   interceptWarmupRequests.value = false
+  stripBillingHeader.value = false
   autoPauseOnExpired.value = true
   openaiPassthroughEnabled.value = false
   openAICompactMode.value = 'auto'
@@ -5267,7 +5304,7 @@ const handleSubmit = async () => {
       }
     }
 
-    applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
+    applyRequestMutationToggles(credentials, 'create')
 
     await createAccountAndFinish('anthropic', 'bedrock' as AccountType, credentials)
     return
@@ -5304,7 +5341,7 @@ const handleSubmit = async () => {
       credentials.model_mapping = antigravityModelMapping
     }
 
-    applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
+    applyRequestMutationToggles(credentials, 'create')
 
     const extra = buildAntigravityExtra()
     await createAccountAndFinish(form.platform, 'apikey', credentials, extra)
@@ -5402,7 +5439,7 @@ const handleSubmit = async () => {
     applyHeaderOverride(credentials, headerOverrideEnabled.value, headerOverrideRows.value, 'create')
   }
 
-  applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
+  applyRequestMutationToggles(credentials, 'create')
   if (!applyTempUnschedConfig(credentials)) {
     return
   }
@@ -5485,6 +5522,7 @@ const createAccountAndFinish = async (
   credentials: Record<string, unknown>,
   extra?: Record<string, unknown>
 ) => {
+  applyRequestMutationToggles(credentials, 'create')
   if (!applyTempUnschedConfig(credentials)) {
     return
   }
@@ -6045,7 +6083,8 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
 
         const credentials = antigravityOAuth.buildCredentials(tokenInfo)
         applyAntigravityProjectID(credentials, antigravityProjectId.value, 'create')
-        
+        applyRequestMutationToggles(credentials, 'create')
+
         // Generate account name with index for batch
         const accountName = refreshTokens.length > 1 ? `${form.name} #${i + 1}` : form.name
 
@@ -6158,22 +6197,22 @@ const handleAntigravityExchange = async (authCode: string) => {
       state: stateToUse,
       proxyId: form.proxy_id
     })
-		if (!tokenInfo) return
+    if (!tokenInfo) return
 
-		const credentials = antigravityOAuth.buildCredentials(tokenInfo)
-		applyAntigravityProjectID(credentials, antigravityProjectId.value, 'create')
-		applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
-		// Antigravity 只使用映射模式
-		const antigravityModelMapping = buildModelMappingObject(
-			'mapping',
-			[],
-			antigravityModelMappings.value
-		)
-		if (antigravityModelMapping) {
-			credentials.model_mapping = antigravityModelMapping
-		}
-		const extra = buildAntigravityExtra()
-		await createAccountAndFinish('antigravity', 'oauth', credentials, extra)
+    const credentials = antigravityOAuth.buildCredentials(tokenInfo)
+    applyAntigravityProjectID(credentials, antigravityProjectId.value, 'create')
+    applyRequestMutationToggles(credentials, 'create')
+    // Antigravity 只使用映射模式
+    const antigravityModelMapping = buildModelMappingObject(
+      'mapping',
+      [],
+      antigravityModelMappings.value
+    )
+    if (antigravityModelMapping) {
+      credentials.model_mapping = antigravityModelMapping
+    }
+    const extra = buildAntigravityExtra()
+    await createAccountAndFinish('antigravity', 'oauth', credentials, extra)
   } catch (error: any) {
     antigravityOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
     appStore.showError(antigravityOAuth.error.value)
@@ -6344,7 +6383,7 @@ const handleAnthropicExchange = async (authCode: string) => {
     }
 
     const credentials: Record<string, unknown> = { ...tokenInfo }
-    applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
+    applyRequestMutationToggles(credentials, 'create')
     await createAccountAndFinish(form.platform, addMethod.value as AccountType, credentials, extra)
   } catch (error: any) {
     oauth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
@@ -6493,7 +6532,7 @@ const handleCookieAuth = async (sessionKey: string) => {
         const accountName = keys.length > 1 ? `${form.name} #${i + 1}` : form.name
 
         const credentials: Record<string, unknown> = { ...tokenInfo }
-        applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
+        applyRequestMutationToggles(credentials, 'create')
         if (tempUnschedEnabled.value) {
           credentials.temp_unschedulable_enabled = true
           credentials.temp_unschedulable_rules = tempUnschedPayload
