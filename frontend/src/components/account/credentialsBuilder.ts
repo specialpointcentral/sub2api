@@ -201,3 +201,15 @@ export function applyHeaderOverride(
     delete credentials[HEADER_OVERRIDES_CREDENTIAL_KEY]
   }
 }
+
+export function applyStripBillingHeader(
+  credentials: Record<string, unknown>,
+  enabled: boolean,
+  mode: 'create' | 'edit'
+): void {
+  if (enabled) {
+    credentials.strip_billing_header = true
+  } else if (mode === 'edit') {
+    delete credentials.strip_billing_header
+  }
+}

@@ -6,6 +6,7 @@ import {
   applyAntigravityProjectID,
   applyHeaderOverride,
   applyInterceptWarmup,
+  applyStripBillingHeader,
   buildHeaderOverridesObject,
   getHeaderOverrideTemplate,
   isHeaderOverridePlatform,
@@ -287,5 +288,31 @@ describe('validateHeaderOverrideRows session isolation headers', () => {
 
   it('rejects oversized names', () => {
     expect(validateHeaderOverrideRows([{ name: 'x'.repeat(201), value: 'v' }])).toBe('invalidName')
+  })
+})
+
+describe('applyStripBillingHeader', () => {
+  it('create + enabled=true: should set strip_billing_header to true', () => {
+    const creds: Record<string, unknown> = { access_token: 'tok' }
+    applyStripBillingHeader(creds, true, 'create')
+    expect(creds.strip_billing_header).toBe(true)
+  })
+
+  it('create + enabled=false: should not add the field', () => {
+    const creds: Record<string, unknown> = { access_token: 'tok' }
+    applyStripBillingHeader(creds, false, 'create')
+    expect('strip_billing_header' in creds).toBe(false)
+  })
+
+  it('edit + enabled=true: should set strip_billing_header to true', () => {
+    const creds: Record<string, unknown> = { api_key: 'sk' }
+    applyStripBillingHeader(creds, true, 'edit')
+    expect(creds.strip_billing_header).toBe(true)
+  })
+
+  it('edit + enabled=false + field exists: should delete the field', () => {
+    const creds: Record<string, unknown> = { api_key: 'sk', strip_billing_header: true }
+    applyStripBillingHeader(creds, false, 'edit')
+    expect('strip_billing_header' in creds).toBe(false)
   })
 })
