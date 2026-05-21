@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyInterceptWarmup } from '../credentialsBuilder'
+import { applyInterceptWarmup, applyStripBillingHeader } from '../credentialsBuilder'
 
 describe('applyInterceptWarmup', () => {
   it('create + enabled=true: should set intercept_warmup_requests to true', () => {
@@ -42,5 +42,31 @@ describe('applyInterceptWarmup', () => {
     expect(creds.api_key).toBe('sk')
     expect(creds.base_url).toBe('url')
     expect('intercept_warmup_requests' in creds).toBe(false)
+  })
+})
+
+describe('applyStripBillingHeader', () => {
+  it('create + enabled=true: should set strip_billing_header to true', () => {
+    const creds: Record<string, unknown> = { access_token: 'tok' }
+    applyStripBillingHeader(creds, true, 'create')
+    expect(creds.strip_billing_header).toBe(true)
+  })
+
+  it('create + enabled=false: should not add the field', () => {
+    const creds: Record<string, unknown> = { access_token: 'tok' }
+    applyStripBillingHeader(creds, false, 'create')
+    expect('strip_billing_header' in creds).toBe(false)
+  })
+
+  it('edit + enabled=true: should set strip_billing_header to true', () => {
+    const creds: Record<string, unknown> = { api_key: 'sk' }
+    applyStripBillingHeader(creds, true, 'edit')
+    expect(creds.strip_billing_header).toBe(true)
+  })
+
+  it('edit + enabled=false + field exists: should delete the field', () => {
+    const creds: Record<string, unknown> = { api_key: 'sk', strip_billing_header: true }
+    applyStripBillingHeader(creds, false, 'edit')
+    expect('strip_billing_header' in creds).toBe(false)
   })
 })

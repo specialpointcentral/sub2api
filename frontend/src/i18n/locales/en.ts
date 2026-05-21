@@ -3384,6 +3384,9 @@ export default {
       interceptWarmupRequests: 'Intercept Warmup Requests',
       interceptWarmupRequestsDesc:
         'When enabled, warmup requests like title generation will return mock responses without consuming upstream tokens',
+      stripBillingHeader: 'Remove Billing Header',
+      stripBillingHeaderDesc:
+        'When enabled, forwarded requests remove system text lines that start with x-anthropic-billing-header to avoid dynamic cch values affecting cache hits',
       autoPauseOnExpired: 'Auto Pause On Expired',
       autoPauseOnExpiredDesc: 'When enabled, the account will auto pause scheduling after it expires',
       // Quota control (Anthropic OAuth/SetupToken only)
