@@ -1529,7 +1529,7 @@
       <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
       <div
         v-if="account?.platform === 'anthropic' || account?.platform === 'antigravity'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
           <div>
@@ -1552,6 +1552,31 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 interceptWarmupRequests ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{
+              t('admin.accounts.stripBillingHeader')
+            }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.stripBillingHeaderDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="stripBillingHeader = !stripBillingHeader"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              stripBillingHeader ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                stripBillingHeader ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -2861,6 +2886,7 @@ import {
   applyHeaderOverride,
   applyInterceptWarmup,
   applyPlanType,
+  applyStripBillingHeader,
   buildPlanTypeOptions,
   readPlanType,
   isCustomGrokBaseUrl,
@@ -3025,6 +3051,7 @@ const grokOAuthBaseUrl = ref('')
 const grokClientToolCacheEnabled = ref(true)
 
 const interceptWarmupRequests = ref(false)
+const stripBillingHeader = ref(false)
 const autoPauseOnExpired = ref(false)
 const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
@@ -3547,6 +3574,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
   interceptWarmupRequests.value = credentials?.intercept_warmup_requests === true
+  stripBillingHeader.value = credentials?.strip_billing_header === true
   autoPauseOnExpired.value = newAccount.auto_pause_on_expired === true
   editVertexProjectId.value = ''
   editVertexClientEmail.value = ''
@@ -4280,6 +4308,14 @@ function formatTempUnschedKeywords(value: unknown) {
   return ''
 }
 
+const applyRequestMutationToggles = (
+  credentials: Record<string, unknown>,
+  mode: 'create' | 'edit'
+) => {
+  applyInterceptWarmup(credentials, interceptWarmupRequests.value, mode)
+  applyStripBillingHeader(credentials, stripBillingHeader.value, mode)
+}
+
 const splitTempUnschedKeywords = (value: string) => {
   return value
     .split(/[,;]/)
@@ -4530,7 +4566,7 @@ const handleSubmit = async () => {
       }
 
       // Add intercept warmup requests setting
-      applyInterceptWarmup(newCredentials, interceptWarmupRequests.value, 'edit')
+      applyRequestMutationToggles(newCredentials, 'edit')
       applyAccountSchedulingThresholdOverridePatch(newCredentials, currentCredentials)
       if (!applyTempUnschedConfig(newCredentials)) {
         return
@@ -4548,7 +4584,7 @@ const handleSubmit = async () => {
       }
 
       // Add intercept warmup requests setting
-      applyInterceptWarmup(newCredentials, interceptWarmupRequests.value, 'edit')
+      applyRequestMutationToggles(newCredentials, 'edit')
 
       applyAccountSchedulingThresholdOverridePatch(newCredentials, currentCredentials)
       if (!applyTempUnschedConfig(newCredentials)) {
@@ -4598,7 +4634,7 @@ const handleSubmit = async () => {
         delete newCredentials.model_mapping
       }
 
-      applyInterceptWarmup(newCredentials, interceptWarmupRequests.value, 'edit')
+      applyRequestMutationToggles(newCredentials, 'edit')
       applyAccountSchedulingThresholdOverridePatch(newCredentials, currentCredentials)
       if (!applyTempUnschedConfig(newCredentials)) {
         return
@@ -4656,7 +4692,7 @@ const handleSubmit = async () => {
         delete newCredentials.model_mapping
       }
 
-      applyInterceptWarmup(newCredentials, interceptWarmupRequests.value, 'edit')
+      applyRequestMutationToggles(newCredentials, 'edit')
       applyAccountSchedulingThresholdOverridePatch(newCredentials, currentCredentials)
       if (!applyTempUnschedConfig(newCredentials)) {
         return
@@ -4668,7 +4704,7 @@ const handleSubmit = async () => {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
       const newCredentials: Record<string, unknown> = { ...currentCredentials }
 
-      applyInterceptWarmup(newCredentials, interceptWarmupRequests.value, 'edit')
+      applyRequestMutationToggles(newCredentials, 'edit')
       applyAccountSchedulingThresholdOverridePatch(newCredentials, currentCredentials)
       if (!applyTempUnschedConfig(newCredentials)) {
         return
