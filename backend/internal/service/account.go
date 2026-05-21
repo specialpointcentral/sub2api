@@ -566,6 +566,24 @@ func (a *Account) GetModelMapping() map[string]string {
 	return mapping
 }
 
+func (a *Account) ShouldStripBillingHeader() bool {
+	if a == nil || a.Credentials == nil {
+		return false
+	}
+	v, ok := a.Credentials["strip_billing_header"]
+	if !ok {
+		return false
+	}
+	switch value := v.(type) {
+	case bool:
+		return value
+	case string:
+		return strings.EqualFold(strings.TrimSpace(value), "true")
+	default:
+		return false
+	}
+}
+
 func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]string {
 	if a.Credentials == nil {
 		// 部分平台在未显式配置 model_mapping 时仍应使用默认映射，

@@ -575,6 +575,9 @@ export default {
       interceptWarmupRequests: 'Intercept Warmup Requests',
       interceptWarmupRequestsDesc:
         'When enabled, warmup requests like title generation will return mock responses without consuming upstream tokens',
+      stripBillingHeader: 'Remove Billing Header',
+      stripBillingHeaderDesc:
+        'Remove system text lines that start with x-anthropic-billing-header before forwarding so dynamic cch values do not affect cache hits',
       headerOverride: {
         title: 'Header Override',
         hint: 'Override same-named request headers on forwarding (case-insensitive)',

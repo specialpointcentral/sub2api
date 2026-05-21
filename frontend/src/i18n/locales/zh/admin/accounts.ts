@@ -681,6 +681,9 @@ export default {
       errorCodeExists: '该错误码已被选中',
       interceptWarmupRequests: '拦截预热请求',
       interceptWarmupRequestsDesc: '启用后，标题生成等预热请求将返回 mock 响应，不消耗上游 token',
+      stripBillingHeader: '删除 Billing Header',
+      stripBillingHeaderDesc:
+        '启用后，转发前会删除 system 中以 x-anthropic-billing-header 开头的文本行，避免动态 cch 影响缓存命中',
       headerOverride: {
         title: '请求头覆写',
         hint: '转发时用配置值覆盖同名请求头（不区分大小写）',
