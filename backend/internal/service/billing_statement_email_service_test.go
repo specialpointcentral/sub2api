@@ -55,6 +55,7 @@ func TestIsValidEmailForBilling(t *testing.T) {
 		{"noatsign", false},
 		{"user@linuxdo-connect.invalid", false},
 		{"user@oidc-connect.invalid", false},
+		{"user@OIDC-CONNECT.INVALID", false},
 		{"user@wechat-connect.invalid", false},
 		{"admin@company.org", true},
 	}
@@ -117,6 +118,59 @@ func TestBuildBillingStatementEmailHTML_Basic(t *testing.T) {
 	}
 	if !containsStr(html, "$8.5000") {
 		t.Error("expected balance in HTML")
+	}
+}
+
+func TestBillingStatementEmailService_UsesNotificationTemplate(t *testing.T) {
+	ctx := context.Background()
+	server := startNotificationEmailTestSMTPServer(t)
+	repo := newNotificationEmailMemorySettingRepo()
+	for key, value := range server.settings() {
+		if err := repo.Set(ctx, key, value); err != nil {
+			t.Fatalf("set smtp setting %s: %v", key, err)
+		}
+	}
+
+	emailService := NewEmailService(repo, nil)
+	notificationEmailService := NewNotificationEmailService(repo, emailService)
+	emailService.SetNotificationEmailService(notificationEmailService)
+	if err := repo.Set(ctx, SettingKeySiteName, "Sub2API Test"); err != nil {
+		t.Fatalf("set site name: %v", err)
+	}
+	_, err := notificationEmailService.UpdateTemplate(ctx, NotificationEmailEventBillingStatement, "en",
+		"Custom statement {{period_name}}",
+		"<h1>Custom billing statement</h1>{{statement_html}}",
+	)
+	if err != nil {
+		t.Fatalf("update billing statement template: %v", err)
+	}
+
+	stmt := &BillingStatement{
+		UserID:     7,
+		UserEmail:  "billing@example.com",
+		PeriodName: "Monthly Billing Statement",
+		Start:      time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		End:        time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		Timezone:   "UTC",
+		Lines: []BillingStatementLine{{
+			Model:      "gpt-5",
+			Requests:   3,
+			TotalCost:  1.25,
+			ActualCost: 1.00,
+			Discount:   0.25,
+		}},
+		TotalCost:  1.25,
+		ActualCost: 1.00,
+		Discount:   0.25,
+		Balance:    9.50,
+	}
+	svc := &BillingStatementEmailService{emailService: emailService}
+
+	if !svc.sendStatementWithTemplate(ctx, &User{ID: 7, Email: "billing@example.com"}, stmt) {
+		t.Fatal("expected billing statement to be sent through notification template service")
+	}
+	if got := server.messageCount(); got != 1 {
+		t.Fatalf("expected one templated email, got %d", got)
 	}
 }
 
