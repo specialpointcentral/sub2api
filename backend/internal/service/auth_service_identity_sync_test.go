@@ -68,8 +68,12 @@ func (s *authIdentitySettingRepoStub) GetValue(_ context.Context, key string) (s
 	return "", service.ErrSettingNotFound
 }
 
-func (s *authIdentitySettingRepoStub) Set(context.Context, string, string) error {
-	panic("unexpected Set call")
+func (s *authIdentitySettingRepoStub) Set(_ context.Context, key, value string) error {
+	if s.values == nil {
+		s.values = make(map[string]string)
+	}
+	s.values[key] = value
+	return nil
 }
 
 func (s *authIdentitySettingRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
@@ -82,16 +86,23 @@ func (s *authIdentitySettingRepoStub) GetMultiple(_ context.Context, keys []stri
 	return out, nil
 }
 
-func (s *authIdentitySettingRepoStub) SetMultiple(context.Context, map[string]string) error {
-	panic("unexpected SetMultiple call")
+func (s *authIdentitySettingRepoStub) SetMultiple(_ context.Context, values map[string]string) error {
+	if s.values == nil {
+		s.values = make(map[string]string)
+	}
+	for key, value := range values {
+		s.values[key] = value
+	}
+	return nil
 }
 
 func (s *authIdentitySettingRepoStub) GetAll(context.Context) (map[string]string, error) {
 	panic("unexpected GetAll call")
 }
 
-func (s *authIdentitySettingRepoStub) Delete(context.Context, string) error {
-	panic("unexpected Delete call")
+func (s *authIdentitySettingRepoStub) Delete(_ context.Context, key string) error {
+	delete(s.values, key)
+	return nil
 }
 
 func newAuthServiceWithEnt(
