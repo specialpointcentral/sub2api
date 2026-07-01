@@ -33,6 +33,7 @@ const (
 	NotificationEmailEventCyberPolicyNotice           = "content_moderation.cyber_policy_notice"
 	NotificationEmailEventOpsAlert                    = "ops.alert"
 	NotificationEmailEventOpsScheduledReport          = "ops.scheduled_report"
+	NotificationEmailEventBillingStatement            = "billing.statement"
 
 	notificationEmailTemplateKeyPrefix    = "notification_email_template:"
 	notificationEmailPreferenceKeyPrefix  = "notification_email_preference:"
@@ -711,7 +712,14 @@ func renderNotificationEmailString(event, raw string, variables map[string]strin
 }
 
 func notificationEmailRawHTMLAllowed(event, placeholder string) bool {
-	return event == NotificationEmailEventOpsScheduledReport && placeholder == "report_html"
+	switch event {
+	case NotificationEmailEventOpsScheduledReport:
+		return placeholder == "report_html"
+	case NotificationEmailEventBillingStatement:
+		return placeholder == "statement_html"
+	default:
+		return false
+	}
 }
 
 func notificationEmailAllowedPlaceholderSet(event string) map[string]struct{} {
@@ -888,6 +896,15 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"report_start_time":   "2026-05-19 12:00",
 			"report_end_time":     "2026-05-20 12:00",
 			"report_html":         "<h2>日报</h2><p>请求量：1024</p>",
+			"period_name":         "月账单",
+			"period_start":        "2026-05-01",
+			"period_end":          "2026-06-01",
+			"timezone":            "Asia/Shanghai",
+			"statement_html":      `<table style="width:100%;border-collapse:collapse;"><tr><th>模型</th><th>请求数</th><th>实际价格</th></tr><tr><td>gpt-5</td><td>128</td><td>$12.3400</td></tr></table>`,
+			"total_cost":          "15.0000",
+			"actual_cost":         "12.3400",
+			"discount":            "2.6600",
+			"balance":             "87.6500",
 		}
 	}
 	return map[string]string{
@@ -934,6 +951,15 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"report_start_time":   "2026-05-19 12:00",
 		"report_end_time":     "2026-05-20 12:00",
 		"report_html":         "<h2>Daily summary</h2><p>Requests: 1024</p>",
+		"period_name":         "Monthly Billing Statement",
+		"period_start":        "2026-05-01",
+		"period_end":          "2026-06-01",
+		"timezone":            "UTC",
+		"statement_html":      `<table style="width:100%;border-collapse:collapse;"><tr><th>Model</th><th>Requests</th><th>Actual Price</th></tr><tr><td>gpt-5</td><td>128</td><td>$12.3400</td></tr></table>`,
+		"total_cost":          "15.0000",
+		"actual_cost":         "12.3400",
+		"discount":            "2.6600",
+		"balance":             "87.6500",
 	}
 }
 
@@ -951,6 +977,7 @@ var notificationEmailEventOrder = []string{
 	NotificationEmailEventCyberPolicyNotice,
 	NotificationEmailEventOpsAlert,
 	NotificationEmailEventOpsScheduledReport,
+	NotificationEmailEventBillingStatement,
 }
 
 var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
@@ -1064,6 +1091,16 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
 			"report_name", "report_type", "report_start_time", "report_end_time", "report_html"),
 	},
+	NotificationEmailEventBillingStatement: {
+		Event:       NotificationEmailEventBillingStatement,
+		Label:       "Billing statement",
+		Description: "Sent to users for scheduled daily/weekly/monthly billing statements.",
+		Category:    "billing",
+		Optional:    false,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
+			"period_name", "period_start", "period_end", "timezone", "statement_html",
+			"total_cost", "actual_cost", "discount", "balance"),
+	},
 }
 
 var notificationEmailOfficialTemplates = map[string]map[string]notificationEmailOfficialTemplate{
@@ -1085,6 +1122,24 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center;">{{verification_code}}</p>
 <p>验证码将在 <strong>{{expires_in_minutes}}</strong> 分钟后失效。</p>
 <p>如果不是您本人操作，请忽略此邮件。</p>`),
+		},
+	},
+	NotificationEmailEventBillingStatement: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] {{period_name}} ({{period_start}} ~ {{period_end}})",
+			HTML: notificationEmailCard("#4f46e5", "Billing statement", `
+<p>Hello {{recipient_name}},</p>
+<p>Your billing statement for <strong>{{period_start}} ~ {{period_end}}</strong> ({{timezone}}) is ready.</p>
+{{statement_html}}
+<p class="muted">To unsubscribe from this statement, go to Profile - Billing Statement Email Preferences.</p>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] {{period_name}}（{{period_start}} ~ {{period_end}}）",
+			HTML: notificationEmailCard("#4f46e5", "账单邮件", `
+<p>{{recipient_name}}，您好：</p>
+<p>您在 <strong>{{period_start}} ~ {{period_end}}</strong>（{{timezone}}）的账单如下。</p>
+{{statement_html}}
+<p class="muted">如要退订该账单，请在 个人资料 - 账单邮件偏好 中关闭对应周期。</p>`),
 		},
 	},
 	NotificationEmailEventAuthPasswordReset: {
