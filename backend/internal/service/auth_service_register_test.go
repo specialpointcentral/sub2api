@@ -33,7 +33,11 @@ func (s *settingRepoStub) GetValue(ctx context.Context, key string) (string, err
 }
 
 func (s *settingRepoStub) Set(ctx context.Context, key, value string) error {
-	panic("unexpected Set call")
+	if s.values == nil {
+		s.values = make(map[string]string)
+	}
+	s.values[key] = value
+	return nil
 }
 
 func (s *settingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
@@ -50,7 +54,13 @@ func (s *settingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[s
 }
 
 func (s *settingRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
-	panic("unexpected SetMultiple call")
+	if s.values == nil {
+		s.values = make(map[string]string)
+	}
+	for k, v := range settings {
+		s.values[k] = v
+	}
+	return nil
 }
 
 func (s *settingRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
@@ -58,7 +68,8 @@ func (s *settingRepoStub) GetAll(ctx context.Context) (map[string]string, error)
 }
 
 func (s *settingRepoStub) Delete(ctx context.Context, key string) error {
-	panic("unexpected Delete call")
+	delete(s.values, key)
+	return nil
 }
 
 type emailCacheStub struct {
@@ -453,10 +464,11 @@ func TestAuthService_Register_CreateEmailExistsRace(t *testing.T) {
 
 func TestAuthService_Register_Success(t *testing.T) {
 	repo := &userRepoStub{nextID: 5}
-	service := newAuthService(repo, map[string]string{
+	settings := map[string]string{
 		SettingKeyRegistrationEnabled:                 "true",
 		SettingKeyAuthSourceDefaultEmailGrantOnSignup: "false",
-	}, nil, nil)
+	}
+	service := newAuthService(repo, settings, nil, nil)
 
 	token, user, err := service.Register(context.Background(), "user@test.com", "password")
 	require.NoError(t, err)
@@ -470,6 +482,13 @@ func TestAuthService_Register_Success(t *testing.T) {
 	require.Equal(t, 2, user.Concurrency)
 	require.Len(t, repo.created, 1)
 	require.True(t, user.CheckPassword("password"))
+
+	rawPref := settings[SettingKeyBillingStatementUserPreferencePrefix+"5"]
+	require.NotEmpty(t, rawPref)
+	pref := ParseBillingStatementUserPreference(rawPref)
+	require.False(t, pref.DailyEnabled)
+	require.False(t, pref.WeeklyEnabled)
+	require.True(t, pref.MonthlyEnabled)
 }
 
 func TestAuthService_ValidateToken_ExpiredReturnsClaimsWithError(t *testing.T) {
