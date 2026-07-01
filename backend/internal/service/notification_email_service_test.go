@@ -143,6 +143,7 @@ func TestNotificationEmailAdditionalEventsAreListedAndPreviewable(t *testing.T) 
 		{NotificationEmailEventCyberPolicyNotice, "upstream_message"},
 		{NotificationEmailEventOpsAlert, "rule_name"},
 		{NotificationEmailEventOpsScheduledReport, "report_html"},
+		{NotificationEmailEventBillingStatement, "statement_html"},
 	}
 
 	for _, check := range checks {
@@ -162,6 +163,8 @@ func TestNotificationEmailRawHTMLVariablesAreTrustedOnlyForHTMLPlaceholders(t *t
 	require.True(t, notificationEmailRawHTMLAllowed(NotificationEmailEventOpsScheduledReport, "report_html"))
 	require.False(t, notificationEmailRawHTMLAllowed(NotificationEmailEventOpsScheduledReport, "recipient_name"))
 	require.False(t, notificationEmailRawHTMLAllowed(NotificationEmailEventOpsAlert, "report_html"))
+	require.True(t, notificationEmailRawHTMLAllowed(NotificationEmailEventBillingStatement, "statement_html"))
+	require.False(t, notificationEmailRawHTMLAllowed(NotificationEmailEventBillingStatement, "recipient_name"))
 
 	preview, err := renderNotificationEmail(
 		NotificationEmailEventOpsScheduledReport,
@@ -191,6 +194,23 @@ func TestNotificationEmailRawHTMLVariablesAreTrustedOnlyForHTMLPlaceholders(t *t
 	require.NoError(t, err)
 	require.Contains(t, preview.HTML, `&lt;em&gt;escaped&lt;/em&gt;`)
 	require.NotContains(t, preview.HTML, `<strong>raw</strong>`)
+
+	preview, err = renderNotificationEmail(
+		NotificationEmailEventBillingStatement,
+		"Statement {{recipient_name}}",
+		`<section>{{statement_html}}</section><p>{{recipient_name}}</p>`,
+		map[string]string{
+			"recipient_name": `<em>escaped</em>`,
+			"statement_html": `<p>escaped statement</p>`,
+		},
+		map[string]string{
+			"statement_html": `<table><tr><td>trusted statement</td></tr></table>`,
+		},
+	)
+	require.NoError(t, err)
+	require.Contains(t, preview.HTML, `<table><tr><td>trusted statement</td></tr></table>`)
+	require.NotContains(t, preview.HTML, `escaped statement`)
+	require.Contains(t, preview.HTML, `&lt;em&gt;escaped&lt;/em&gt;`)
 }
 
 func TestNotificationEmailFallbackClassification(t *testing.T) {
