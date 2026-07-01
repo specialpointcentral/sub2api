@@ -506,10 +506,53 @@ func (s *BillingStatementEmailService) sendStatementToUser(ctx context.Context, 
 		)
 	}
 
+	if s.sendStatementWithTemplate(ctx, user, stmt) {
+		return
+	}
+
 	body := buildBillingStatementEmailHTML(stmt)
 	if err := s.emailService.SendEmail(ctx, user.Email, subject, body); err != nil {
 		log.Printf("[BillingStatement] send email to %s failed: %v", user.Email, err)
 	}
+}
+
+func (s *BillingStatementEmailService) sendStatementWithTemplate(ctx context.Context, user *User, stmt *BillingStatement) bool {
+	if s == nil || s.emailService == nil || s.emailService.notificationEmailService == nil || user == nil || stmt == nil {
+		return false
+	}
+	start := stmt.Start.Format("2006-01-02")
+	end := stmt.End.Format("2006-01-02")
+	err := s.emailService.notificationEmailService.Send(ctx, NotificationEmailSendInput{
+		Event:          NotificationEmailEventBillingStatement,
+		RecipientEmail: user.Email,
+		RecipientName:  emailRecipientName(user.Email),
+		UserID:         user.ID,
+		SourceType:     "billing_statement",
+		SourceID:       strconv.FormatInt(user.ID, 10),
+		ReminderKey:    stmt.PeriodName + ":" + start + ":" + end,
+		Variables: map[string]string{
+			"period_name":  stmt.PeriodName,
+			"period_start": start,
+			"period_end":   end,
+			"timezone":     stmt.Timezone,
+			"total_cost":   fmt.Sprintf("%.4f", stmt.TotalCost),
+			"actual_cost":  fmt.Sprintf("%.4f", stmt.ActualCost),
+			"discount":     fmt.Sprintf("%.4f", stmt.Discount),
+			"balance":      fmt.Sprintf("%.4f", stmt.Balance),
+		},
+		RawHTMLVariables: map[string]string{
+			"statement_html": buildBillingStatementEmailContentHTML(stmt),
+		},
+	})
+	if err == nil {
+		return true
+	}
+	if shouldFallbackNotificationEmail(err) {
+		log.Printf("[BillingStatement] template email failed for %s; falling back to built-in body: %v", user.Email, err)
+		return false
+	}
+	log.Printf("[BillingStatement] send template email to %s failed: %v", user.Email, err)
+	return true
 }
 
 func billingStatementLocationName(loc *time.Location) string {
@@ -579,6 +622,55 @@ func buildBillingStatementEmailHTML(stmt *BillingStatement) string {
 		return "<p>无数据 / No data.</p>"
 	}
 
+	statementHTML := buildBillingStatementEmailContentHTML(stmt)
+	if statementHTML == "" {
+		statementHTML = "<p>无数据 / No data.</p>"
+	}
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
+.container { max-width: 800px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.header { background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%); color: white; padding: 30px; text-align: center; }
+.header h1 { margin: 0; font-size: 22px; }
+.header h1 .en { display: block; margin-top: 6px; font-size: 16px; font-weight: 500; opacity: 0.92; }
+.content { padding: 30px; }
+.footer { background-color: #f8f9fa; padding: 16px; text-align: center; color: #999; font-size: 12px; }
+.footer p { margin: 6px 0; }
+.footer .en { display: block; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header"><h1>%s</h1></div>
+<div class="content">
+<p><b>致 %s：</b><br><b>To %s:</b></p>
+<p><b>时间段 / Period</b>: %s ~ %s (%s)</p>
+%s
+</div>
+<div class="footer">
+<p>此邮件由系统自动发送，请勿回复。<span class="en">This is an automated message, please do not reply.</span></p>
+<p>如要退订该账单，请在 个人资料 - 账单邮件偏好 进行退订。<span class="en">To unsubscribe from this statement, go to Profile - Billing Statement Email Preferences.</span></p>
+</div>
+</div>
+</body>
+</html>`,
+		billingStatementBilingualTitleHTML(stmt.PeriodName),
+		billingStatementHTMLEscape(stmt.UserEmail),
+		billingStatementHTMLEscape(stmt.UserEmail),
+		billingStatementHTMLEscape(stmt.Start.Format("2006-01-02 15:04")),
+		billingStatementHTMLEscape(stmt.End.Format("2006-01-02 15:04")),
+		billingStatementHTMLEscape(stmt.Timezone),
+		statementHTML,
+	)
+}
+
+func buildBillingStatementEmailContentHTML(stmt *BillingStatement) string {
+	if stmt == nil {
+		return ""
+	}
 	var rows strings.Builder
 	for _, line := range stmt.Lines {
 		billingMode := billingStatementBillingModeLabel(line.BillingMode)
@@ -606,57 +698,16 @@ func buildBillingStatementEmailHTML(stmt *BillingStatement) string {
 		))
 	}
 
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
-.container { max-width: 800px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-.header { background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%); color: white; padding: 30px; text-align: center; }
-.header h1 { margin: 0; font-size: 22px; }
-.header h1 .en { display: block; margin-top: 6px; font-size: 16px; font-weight: 500; opacity: 0.92; }
-.content { padding: 30px; }
-table { width: 100%%; border-collapse: collapse; font-size: 13px; margin-top: 16px; }
-th, td { border: 1px solid #e0e0e0; padding: 8px 10px; text-align: left; }
-th { background-color: #f8f9fa; font-weight: 600; }
-.summary { margin-top: 20px; padding: 16px; background-color: #f8f9fa; border-radius: 6px; }
-.summary p { margin: 6px 0; font-size: 14px; }
-.footer { background-color: #f8f9fa; padding: 16px; text-align: center; color: #999; font-size: 12px; }
-.footer p { margin: 6px 0; }
-.footer .en { display: block; margin-top: 4px; }
-</style>
-</head>
-<body>
-<div class="container">
-<div class="header"><h1>%s</h1></div>
-<div class="content">
-<p><b>致 %s：</b><br><b>To %s:</b></p>
-<p><b>时间段 / Period</b>: %s ~ %s (%s)</p>
-<table>
+	return fmt.Sprintf(`<table style="width:100%%;border-collapse:collapse;font-size:13px;margin-top:16px;">
 <thead><tr><th>模型 / Model</th><th>计费模式 / Billing Mode</th><th>分组 / Group</th><th>订阅 / Subscription</th><th>请求数 / Requests</th><th>Token 数 / Tokens</th><th>标准价格 / Standard Price</th><th>实际价格 / Actual Price</th><th>优惠差额 / Discount</th></tr></thead>
 <tbody>%s</tbody>
 </table>
-<div class="summary">
+<div style="margin-top:20px;padding:16px;background-color:#f8f9fa;border-radius:6px;">
 <p><b>标准总价 / Total Cost</b>: $%.4f</p>
 <p><b>实际总价 / Actual Cost</b>: $%.4f</p>
 <p><b>优惠总额 / Total Discount</b>: $%.4f</p>
 <p><b>账户余额 / Balance</b>: $%.4f</p>
-</div>
-</div>
-<div class="footer">
-<p>此邮件由系统自动发送，请勿回复。<span class="en">This is an automated message, please do not reply.</span></p>
-<p>如要退订该账单，请在 个人资料 - 账单邮件偏好 进行退订。<span class="en">To unsubscribe from this statement, go to Profile - Billing Statement Email Preferences.</span></p>
-</div>
-</div>
-</body>
-</html>`,
-		billingStatementBilingualTitleHTML(stmt.PeriodName),
-		billingStatementHTMLEscape(stmt.UserEmail),
-		billingStatementHTMLEscape(stmt.UserEmail),
-		billingStatementHTMLEscape(stmt.Start.Format("2006-01-02 15:04")),
-		billingStatementHTMLEscape(stmt.End.Format("2006-01-02 15:04")),
-		billingStatementHTMLEscape(stmt.Timezone),
+</div>`,
 		rows.String(),
 		stmt.TotalCost,
 		stmt.ActualCost,
@@ -700,8 +751,8 @@ func isValidEmailForBilling(email string) bool {
 	if !strings.Contains(addr, "@") {
 		return false
 	}
-	// Skip synthetic/invalid emails from third-party auth
-	if strings.HasSuffix(addr, ".invalid") {
+	// Skip synthetic/invalid emails from third-party auth.
+	if isReservedEmail(addr) {
 		return false
 	}
 	return true
