@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -56,14 +57,12 @@ type BillingStatementUserPreference struct {
 	MonthlyEnabled bool `json:"monthly_enabled"`
 }
 
-// DefaultBillingStatementUserPreference returns the default preference (all disabled).
-// Existing users without an explicit preference JSON should not receive billing
-// statements until they opt in from their profile.
+// DefaultBillingStatementUserPreference returns the default preference.
 func DefaultBillingStatementUserPreference() BillingStatementUserPreference {
 	return BillingStatementUserPreference{
-		DailyEnabled:   false,
-		WeeklyEnabled:  false,
-		MonthlyEnabled: false,
+		DailyEnabled:   true,
+		WeeklyEnabled:  true,
+		MonthlyEnabled: true,
 	}
 }
 
@@ -82,6 +81,17 @@ func ParseBillingStatementUserPreference(raw string) BillingStatementUserPrefere
 // billingStatementUserPreferenceSettingKey returns the setting key for a user's billing preference.
 func billingStatementUserPreferenceSettingKey(userID int64) string {
 	return SettingKeyBillingStatementUserPreferencePrefix + strconv.FormatInt(userID, 10)
+}
+
+func initializeDefaultBillingStatementPreference(ctx context.Context, repo SettingRepository, userID int64) error {
+	if repo == nil || userID <= 0 {
+		return nil
+	}
+	data, err := json.Marshal(DefaultBillingStatementUserPreference())
+	if err != nil {
+		return err
+	}
+	return repo.Set(ctx, billingStatementUserPreferenceSettingKey(userID), string(data))
 }
 
 // ParseBillingStatementEmailConfig parses JSON into config, falling back to defaults.
@@ -144,6 +154,15 @@ const (
 )
 
 var billingStatementCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+var billingStatementEmailSendTimeout = 120 * time.Second
+
+type billingStatementDef struct {
+	enabled  bool
+	kind     string
+	name     string
+	schedule string
+}
 
 type billingStatementRedisClient interface {
 	SetNX(ctx context.Context, key string, value any, expiration time.Duration) (bool, error)
@@ -266,8 +285,7 @@ func (s *BillingStatementEmailService) runOnce() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(s.stopCtx, 120*time.Second)
-	defer cancel()
+	ctx := s.baseContext()
 
 	// Read config from settings
 	billingCfg := s.loadConfig(ctx)
@@ -289,56 +307,66 @@ func (s *BillingStatementEmailService) runOnce() {
 		now = now.In(s.loc)
 	}
 
-	type statementDef struct {
-		enabled  bool
-		kind     string
-		name     string
-		schedule string
-	}
-
-	defs := []statementDef{
+	defs := []billingStatementDef{
 		{enabled: billingCfg.DailyEnabled, kind: "daily", name: "日账单 / Daily Billing Statement", schedule: billingCfg.DailySchedule},
 		{enabled: billingCfg.WeeklyEnabled, kind: "weekly", name: "周账单 / Weekly Billing Statement", schedule: billingCfg.WeeklySchedule},
 		{enabled: billingCfg.MonthlyEnabled, kind: "monthly", name: "月账单 / Monthly Billing Statement", schedule: billingCfg.MonthlySchedule},
 	}
 
 	for _, d := range defs {
-		if !d.enabled {
-			continue
-		}
-		spec := strings.TrimSpace(d.schedule)
-		if spec == "" {
-			continue
-		}
-		sched, err := billingStatementCronParser.Parse(spec)
-		if err != nil {
-			log.Printf("[BillingStatement] invalid cron spec=%q for kind=%s: %v", spec, d.kind, err)
-			continue
-		}
-
-		lastRun := s.getLastRunAt(ctx, d.kind)
-		base := lastRun
-		if base.IsZero() {
-			base = now.Add(-1 * time.Minute)
-		}
-		next := sched.Next(base)
-		if next.IsZero() || next.After(now) {
-			continue
-		}
-		if !s.isEmailDeliveryConfigured(ctx) {
-			continue
-		}
-
-		// Time to run this statement. Only record last_run after the
-		// send cycle completes without the context being canceled/timing out,
-		// so interrupted runs remain eligible for retry on the next pass.
-		s.sendStatements(ctx, d.kind, d.name, now)
-		if ctx.Err() != nil {
-			log.Printf("[BillingStatement] send interrupted for kind=%s; last_run not updated: %v", d.kind, ctx.Err())
-			continue
-		}
-		s.setLastRunAt(ctx, d.kind, now)
+		s.runStatementKind(ctx, d, now)
 	}
+}
+
+func (s *BillingStatementEmailService) baseContext() context.Context {
+	if s != nil && s.stopCtx != nil {
+		return s.stopCtx
+	}
+	return context.Background()
+}
+
+func (s *BillingStatementEmailService) runStatementKind(parent context.Context, d billingStatementDef, now time.Time) {
+	if !d.enabled {
+		return
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	spec := strings.TrimSpace(d.schedule)
+	if spec == "" {
+		return
+	}
+	sched, err := billingStatementCronParser.Parse(spec)
+	if err != nil {
+		log.Printf("[BillingStatement] invalid cron spec=%q for kind=%s: %v", spec, d.kind, err)
+		return
+	}
+
+	lastRun := s.getLastRunAt(ctx, d.kind)
+	base := lastRun
+	if base.IsZero() {
+		base = now.Add(-1 * time.Minute)
+	}
+	next := sched.Next(base)
+	if next.IsZero() || next.After(now) {
+		return
+	}
+	if !s.isEmailDeliveryConfigured(ctx) {
+		return
+	}
+
+	// Time to run this statement. Only record last_run after the
+	// send cycle completes without the service context being canceled,
+	// so interrupted runs remain eligible for retry on the next pass.
+	s.sendStatements(ctx, d.kind, d.name, now)
+	if ctx.Err() != nil {
+		log.Printf("[BillingStatement] send interrupted for kind=%s; last_run not updated: %v", d.kind, ctx.Err())
+		return
+	}
+	s.setLastRunAt(ctx, d.kind, now)
 }
 
 func (s *BillingStatementEmailService) isEmailDeliveryConfigured(ctx context.Context) bool {
@@ -363,6 +391,9 @@ func (s *BillingStatementEmailService) loadConfig(ctx context.Context) BillingSt
 func (s *BillingStatementEmailService) sendStatements(ctx context.Context, kind string, periodName string, now time.Time) {
 	page := 1
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		users, pageResult, err := s.userRepo.List(ctx, pagination.PaginationParams{
 			Page:     page,
 			PageSize: billingStatementUserPageSize,
@@ -373,17 +404,29 @@ func (s *BillingStatementEmailService) sendStatements(ctx context.Context, kind 
 		}
 
 		for i := range users {
+			if ctx.Err() != nil {
+				return
+			}
 			user := &users[i]
 			if !isValidEmailForBilling(user.Email) {
 				continue
 			}
-			// Check user preference for this period kind
-			if !s.isUserPeriodEnabled(ctx, user.ID, kind) {
+			if !user.IsActive() {
 				continue
 			}
-			loc := s.userLocation(ctx, user.ID)
+			emailCtx, cancel := context.WithTimeout(ctx, billingStatementEmailSendTimeout)
+			// Check user preference for this period kind
+			if !s.isUserPeriodEnabled(emailCtx, user.ID, kind) {
+				cancel()
+				continue
+			}
+			loc := s.userLocation(emailCtx, user.ID)
 			start, end := billingStatementPeriodRange(kind, now, loc)
-			s.sendStatementToUser(ctx, user, periodName, start, end, loc)
+			s.sendStatementToUser(emailCtx, user, periodName, start, end, loc)
+			if err := emailCtx.Err(); err != nil && ctx.Err() == nil {
+				log.Printf("[BillingStatement] send timed out or canceled for kind=%s user=%d: %v", kind, user.ID, err)
+			}
+			cancel()
 		}
 
 		if pageResult == nil || page >= pageResult.Pages {
@@ -443,8 +486,7 @@ func startOfBillingStatementWeek(t time.Time, loc *time.Location) time.Time {
 // isUserPeriodEnabled checks whether the user has opted in for the given period kind.
 func (s *BillingStatementEmailService) isUserPeriodEnabled(ctx context.Context, userID int64, kind string) bool {
 	raw, err := s.settingRepo.GetValue(ctx, billingStatementUserPreferenceSettingKey(userID))
-	if err != nil || strings.TrimSpace(raw) == "" {
-		// Default: no explicit user opt-in, do not send.
+	if err != nil && !errors.Is(err, ErrSettingNotFound) {
 		return false
 	}
 	pref := ParseBillingStatementUserPreference(raw)
