@@ -486,8 +486,8 @@ func TestAuthService_Register_Success(t *testing.T) {
 	rawPref := settings[SettingKeyBillingStatementUserPreferencePrefix+"5"]
 	require.NotEmpty(t, rawPref)
 	pref := ParseBillingStatementUserPreference(rawPref)
-	require.False(t, pref.DailyEnabled)
-	require.False(t, pref.WeeklyEnabled)
+	require.True(t, pref.DailyEnabled)
+	require.True(t, pref.WeeklyEnabled)
 	require.True(t, pref.MonthlyEnabled)
 }
 
