@@ -67,6 +67,27 @@ func TestAdminService_CreateUser_UsesDefaultBalanceWhenBalanceOmitted(t *testing
 	require.Equal(t, 0.02, repo.created[0].Balance)
 }
 
+func TestAdminService_CreateUser_InitializesDefaultBillingStatementPreference(t *testing.T) {
+	repo := &userRepoStub{nextID: 13}
+	settings := map[string]string{}
+	settingService := NewSettingService(&settingRepoStub{values: settings}, &config.Config{})
+	svc := &adminServiceImpl{userRepo: repo, settingService: settingService}
+
+	user, err := svc.CreateUser(context.Background(), &CreateUserInput{
+		Email:    "billing-default@test.com",
+		Password: "strong-pass",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	rawPref := settings[SettingKeyBillingStatementUserPreferencePrefix+"13"]
+	require.NotEmpty(t, rawPref)
+	pref := ParseBillingStatementUserPreference(rawPref)
+	require.True(t, pref.DailyEnabled)
+	require.True(t, pref.WeeklyEnabled)
+	require.True(t, pref.MonthlyEnabled)
+}
+
 func TestAdminService_CreateUser_ExplicitZeroBalanceOverridesDefault(t *testing.T) {
 	repo := &userRepoStub{nextID: 12}
 	cfg := &config.Config{
