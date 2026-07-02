@@ -130,8 +130,18 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, err
 	}
+	s.initDefaultBillingStatementPreference(ctx, user.ID)
 	s.assignDefaultSubscriptions(ctx, user.ID)
 	return user, nil
+}
+
+func (s *adminServiceImpl) initDefaultBillingStatementPreference(ctx context.Context, userID int64) {
+	if s == nil || s.settingService == nil || s.settingService.settingRepo == nil || userID <= 0 {
+		return
+	}
+	if err := initializeDefaultBillingStatementPreference(ctx, s.settingService.settingRepo, userID); err != nil {
+		logger.LegacyPrintf("service.admin", "failed to initialize billing statement preference: user_id=%d err=%v", userID, err)
+	}
 }
 
 func (s *adminServiceImpl) assignDefaultSubscriptions(ctx context.Context, userID int64) {
