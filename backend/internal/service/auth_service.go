@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/mail"
@@ -913,18 +912,7 @@ func (s *AuthService) initDefaultBillingStatementPreference(ctx context.Context,
 	if s == nil || s.settingService == nil || s.settingService.settingRepo == nil || userID <= 0 {
 		return
 	}
-	pref := BillingStatementUserPreference{
-		DailyEnabled:   false,
-		WeeklyEnabled:  false,
-		MonthlyEnabled: true,
-	}
-	data, err := json.Marshal(pref)
-	if err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Failed to marshal default billing statement preference: user_id=%d err=%v", userID, err)
-		return
-	}
-	key := billingStatementUserPreferenceSettingKey(userID)
-	if err := s.settingService.settingRepo.Set(ctx, key, string(data)); err != nil {
+	if err := initializeDefaultBillingStatementPreference(ctx, s.settingService.settingRepo, userID); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to initialize billing statement preference: user_id=%d err=%v", userID, err)
 	}
 }
