@@ -2,9 +2,80 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/stretchr/testify/require"
 )
+
+func TestBillingStatementEmailService_SendStatementsUsesPerEmailTimeout(t *testing.T) {
+	oldTimeout := billingStatementEmailSendTimeout
+	billingStatementEmailSendTimeout = 5 * time.Millisecond
+	t.Cleanup(func() { billingStatementEmailSendTimeout = oldTimeout })
+
+	ctx := context.Background()
+	settings := newNotificationEmailMemorySettingRepo()
+	for _, userID := range []int64{1, 2} {
+		require.NoError(t, settings.Set(ctx,
+			SettingKeyBillingStatementUserPreferencePrefix+strconv.FormatInt(userID, 10),
+			`{"daily_enabled":true}`,
+		))
+	}
+
+	usageRepo := &billingStatementContextUsageRepoStub{}
+	svc := &BillingStatementEmailService{
+		settingRepo: settings,
+		userRepo: &billingStatementUserRepoStub{users: []User{
+			{ID: 1, Email: "first@example.com", Status: StatusActive},
+			{ID: 2, Email: "second@example.com", Status: StatusActive},
+		}},
+		usageRepo: usageRepo,
+	}
+
+	svc.sendStatements(ctx, "daily", "日账单 / Daily Billing Statement", time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC))
+
+	require.Equal(t, int64(2), usageRepo.calls.Load())
+	require.True(t, usageRepo.firstTimedOut.Load(), "first email should get its own deadline")
+	require.False(t, usageRepo.secondStartedCanceled.Load(), "second email should get a fresh context")
+}
+
+func TestBillingStatementEmailService_SendStatementsSkipsDisabledUsers(t *testing.T) {
+	ctx := context.Background()
+	settings := newNotificationEmailMemorySettingRepo()
+	for _, userID := range []int64{1, 2} {
+		require.NoError(t, settings.Set(ctx,
+			SettingKeyBillingStatementUserPreferencePrefix+strconv.FormatInt(userID, 10),
+			`{"monthly_enabled":true}`,
+		))
+	}
+
+	usageRepo := &billingStatementUsageRepoStub{}
+	svc := &BillingStatementEmailService{
+		settingRepo: settings,
+		userRepo: &billingStatementUserRepoStub{users: []User{
+			{ID: 1, Email: "disabled@example.com", Status: StatusDisabled},
+			{ID: 2, Email: "active@example.com", Status: StatusActive},
+		}},
+		usageRepo: usageRepo,
+	}
+
+	svc.sendStatements(ctx, "monthly", "月账单 / Monthly Billing Statement", time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC))
+
+	require.Equal(t, 1, usageRepo.calls)
+	require.Equal(t, int64(2), usageRepo.userID)
+}
+
+func TestBillingStatementEmailService_UserPeriodEnabledDefaultsToAllPeriodsWhenPreferenceMissing(t *testing.T) {
+	svc := &BillingStatementEmailService{settingRepo: newNotificationEmailMemorySettingRepo()}
+
+	require.True(t, svc.isUserPeriodEnabled(context.Background(), 42, "daily"))
+	require.True(t, svc.isUserPeriodEnabled(context.Background(), 42, "weekly"))
+	require.True(t, svc.isUserPeriodEnabled(context.Background(), 42, "monthly"))
+}
 
 func TestParseBillingStatementEmailConfig_Empty(t *testing.T) {
 	cfg := ParseBillingStatementEmailConfig("")
@@ -226,6 +297,41 @@ func (r *billingStatementUsageRepoStub) GetBillingStatementLines(ctx context.Con
 	r.start = startTime
 	r.end = endTime
 	return r.lines, nil
+}
+
+type billingStatementUserRepoStub struct {
+	UserRepository
+	users []User
+}
+
+func (r *billingStatementUserRepoStub) List(context.Context, pagination.PaginationParams) ([]User, *pagination.PaginationResult, error) {
+	return r.users, &pagination.PaginationResult{Total: int64(len(r.users)), Page: 1, PageSize: len(r.users), Pages: 1}, nil
+}
+
+type billingStatementContextUsageRepoStub struct {
+	UsageLogRepository
+	calls                 atomic.Int64
+	firstTimedOut         atomic.Bool
+	secondStartedCanceled atomic.Bool
+}
+
+func (r *billingStatementContextUsageRepoStub) GetBillingStatementLines(ctx context.Context, userID int64, startTime, endTime time.Time) ([]BillingStatementLine, error) {
+	call := r.calls.Add(1)
+	switch call {
+	case 1:
+		select {
+		case <-ctx.Done():
+			r.firstTimedOut.Store(true)
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			return nil, errors.New("expected per-email context deadline")
+		}
+	case 2:
+		if ctx.Err() != nil {
+			r.secondStartedCanceled.Store(true)
+		}
+	}
+	return nil, nil
 }
 
 func containsStr(s, substr string) bool {
