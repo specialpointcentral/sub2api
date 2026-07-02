@@ -583,7 +583,8 @@ func (s *UserService) updateProfile(ctx context.Context, userID int64, req Updat
 }
 
 // hydrateBillingStatementPreference reads the user's billing statement preference from settings
-// and populates the User struct fields. Defaults to all-disabled if not found.
+// and populates the User struct fields. The intentional opt-out default enables
+// all periods when no saved preference exists.
 func (s *UserService) hydrateBillingStatementPreference(ctx context.Context, user *User) {
 	if user == nil || s.settingRepo == nil {
 		return

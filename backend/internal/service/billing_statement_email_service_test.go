@@ -2,9 +2,113 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/stretchr/testify/require"
 )
+
+type billingStatementDeadlineSettingRepo struct {
+	SettingRepository
+	mu          sync.Mutex
+	hasDeadline bool
+}
+
+func (r *billingStatementDeadlineSettingRepo) GetValue(ctx context.Context, _ string) (string, error) {
+	_, hasDeadline := ctx.Deadline()
+	r.mu.Lock()
+	r.hasDeadline = hasDeadline
+	r.mu.Unlock()
+	return `{"enabled":false}`, nil
+}
+
+func (r *billingStatementDeadlineSettingRepo) sawDeadline() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.hasDeadline
+}
+
+func TestBillingStatementEmailService_RunOnceUsesBoundedContext(t *testing.T) {
+	repo := &billingStatementDeadlineSettingRepo{}
+	svc := &BillingStatementEmailService{
+		settingRepo:  repo,
+		emailService: &EmailService{},
+	}
+
+	svc.runOnce()
+
+	require.True(t, repo.sawDeadline(), "runOnce must finish before its leader lock can expire")
+}
+
+func TestBillingStatementEmailService_SendStatementsUsesPerEmailTimeout(t *testing.T) {
+	oldTimeout := billingStatementEmailSendTimeout
+	billingStatementEmailSendTimeout = 5 * time.Millisecond
+	t.Cleanup(func() { billingStatementEmailSendTimeout = oldTimeout })
+
+	ctx := context.Background()
+	settings := newNotificationEmailMemorySettingRepo()
+	for _, userID := range []int64{1, 2} {
+		require.NoError(t, settings.Set(ctx,
+			SettingKeyBillingStatementUserPreferencePrefix+strconv.FormatInt(userID, 10),
+			`{"daily_enabled":true}`,
+		))
+	}
+
+	usageRepo := &billingStatementContextUsageRepoStub{}
+	svc := &BillingStatementEmailService{
+		settingRepo: settings,
+		userRepo: &billingStatementUserRepoStub{users: []User{
+			{ID: 1, Email: "first@example.com", Status: StatusActive},
+			{ID: 2, Email: "second@example.com", Status: StatusActive},
+		}},
+		usageRepo: usageRepo,
+	}
+
+	svc.sendStatements(ctx, "daily", "日账单 / Daily Billing Statement", time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC))
+
+	require.Equal(t, int64(2), usageRepo.calls.Load())
+	require.True(t, usageRepo.firstTimedOut.Load(), "first email should get its own deadline")
+	require.False(t, usageRepo.secondStartedCanceled.Load(), "second email should get a fresh context")
+}
+
+func TestBillingStatementEmailService_SendStatementsSkipsDisabledUsers(t *testing.T) {
+	ctx := context.Background()
+	settings := newNotificationEmailMemorySettingRepo()
+	for _, userID := range []int64{1, 2} {
+		require.NoError(t, settings.Set(ctx,
+			SettingKeyBillingStatementUserPreferencePrefix+strconv.FormatInt(userID, 10),
+			`{"monthly_enabled":true}`,
+		))
+	}
+
+	usageRepo := &billingStatementUsageRepoStub{}
+	svc := &BillingStatementEmailService{
+		settingRepo: settings,
+		userRepo: &billingStatementUserRepoStub{users: []User{
+			{ID: 1, Email: "disabled@example.com", Status: StatusDisabled},
+			{ID: 2, Email: "active@example.com", Status: StatusActive},
+		}},
+		usageRepo: usageRepo,
+	}
+
+	svc.sendStatements(ctx, "monthly", "月账单 / Monthly Billing Statement", time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC))
+
+	require.Equal(t, 1, usageRepo.calls)
+	require.Equal(t, int64(2), usageRepo.userID)
+}
+
+func TestBillingStatementEmailService_UserPeriodEnabledDefaultsToAllPeriodsWhenPreferenceMissing(t *testing.T) {
+	svc := &BillingStatementEmailService{settingRepo: newNotificationEmailMemorySettingRepo()}
+
+	require.True(t, svc.isUserPeriodEnabled(context.Background(), 42, "daily"))
+	require.True(t, svc.isUserPeriodEnabled(context.Background(), 42, "weekly"))
+	require.True(t, svc.isUserPeriodEnabled(context.Background(), 42, "monthly"))
+}
 
 func TestParseBillingStatementEmailConfig_Empty(t *testing.T) {
 	cfg := ParseBillingStatementEmailConfig("")
@@ -174,6 +278,39 @@ func TestBillingStatementEmailService_UsesNotificationTemplate(t *testing.T) {
 	}
 }
 
+func TestBillingStatementEmailService_FallbackDeliveryIsDeduplicated(t *testing.T) {
+	ctx := context.Background()
+	server := startNotificationEmailTestSMTPServer(t)
+	repo := newNotificationEmailMemorySettingRepo()
+	for key, value := range server.settings() {
+		require.NoError(t, repo.Set(ctx, key, value))
+	}
+	require.NoError(t, repo.Set(ctx,
+		notificationEmailTemplateKey(NotificationEmailEventBillingStatement, notificationEmailDefaultLocale),
+		`{invalid`,
+	))
+
+	emailService := NewEmailService(repo, nil)
+	notificationEmailService := NewNotificationEmailService(repo, emailService)
+	emailService.SetNotificationEmailService(notificationEmailService)
+	usageRepo := &billingStatementUsageRepoStub{lines: []BillingStatementLine{{
+		Model: "gpt-5", Requests: 1, TotalTokens: 10, TotalCost: 0.1, ActualCost: 0.1,
+	}}}
+	svc := &BillingStatementEmailService{
+		settingRepo:  repo,
+		usageRepo:    usageRepo,
+		emailService: emailService,
+	}
+	user := &User{ID: 8, Email: "fallback@example.com", Status: StatusActive}
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 1)
+
+	svc.sendStatementToUser(ctx, user, "Daily Billing Statement", start, end, time.UTC)
+	svc.sendStatementToUser(ctx, user, "Daily Billing Statement", start, end, time.UTC)
+
+	require.Equal(t, int64(1), server.messageCount())
+}
+
 func TestAggregateUserUsageUsesRepositoryAggregation(t *testing.T) {
 	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -226,6 +363,41 @@ func (r *billingStatementUsageRepoStub) GetBillingStatementLines(ctx context.Con
 	r.start = startTime
 	r.end = endTime
 	return r.lines, nil
+}
+
+type billingStatementUserRepoStub struct {
+	UserRepository
+	users []User
+}
+
+func (r *billingStatementUserRepoStub) List(context.Context, pagination.PaginationParams) ([]User, *pagination.PaginationResult, error) {
+	return r.users, &pagination.PaginationResult{Total: int64(len(r.users)), Page: 1, PageSize: len(r.users), Pages: 1}, nil
+}
+
+type billingStatementContextUsageRepoStub struct {
+	UsageLogRepository
+	calls                 atomic.Int64
+	firstTimedOut         atomic.Bool
+	secondStartedCanceled atomic.Bool
+}
+
+func (r *billingStatementContextUsageRepoStub) GetBillingStatementLines(ctx context.Context, userID int64, startTime, endTime time.Time) ([]BillingStatementLine, error) {
+	call := r.calls.Add(1)
+	switch call {
+	case 1:
+		select {
+		case <-ctx.Done():
+			r.firstTimedOut.Store(true)
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			return nil, errors.New("expected per-email context deadline")
+		}
+	case 2:
+		if ctx.Err() != nil {
+			r.secondStartedCanceled.Store(true)
+		}
+	}
+	return nil, nil
 }
 
 func containsStr(s, substr string) bool {
