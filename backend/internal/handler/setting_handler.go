@@ -106,7 +106,6 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		BillingStatementDailyEnabled:   settings.BillingStatementDailyEnabled,
 		BillingStatementWeeklyEnabled:  settings.BillingStatementWeeklyEnabled,
 		BillingStatementMonthlyEnabled: settings.BillingStatementMonthlyEnabled,
-		ServerTimezone:                 settings.ServerTimezone,
 	})
 }
 

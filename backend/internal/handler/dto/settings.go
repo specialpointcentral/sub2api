@@ -340,13 +340,12 @@ type PublicSettings struct {
 
 	AffiliateEnabled bool `json:"affiliate_enabled"`
 
-	RiskControlEnabled             bool   `json:"risk_control_enabled"`
-	AllowUserViewErrorRequests     bool   `json:"allow_user_view_error_requests"`
-	BillingStatementEmailEnabled   bool   `json:"billing_statement_email_enabled"`
-	BillingStatementDailyEnabled   bool   `json:"billing_statement_daily_enabled"`
-	BillingStatementWeeklyEnabled  bool   `json:"billing_statement_weekly_enabled"`
-	BillingStatementMonthlyEnabled bool   `json:"billing_statement_monthly_enabled"`
-	ServerTimezone                 string `json:"server_timezone"`
+	RiskControlEnabled             bool `json:"risk_control_enabled"`
+	AllowUserViewErrorRequests     bool `json:"allow_user_view_error_requests"`
+	BillingStatementEmailEnabled   bool `json:"billing_statement_email_enabled"`
+	BillingStatementDailyEnabled   bool `json:"billing_statement_daily_enabled"`
+	BillingStatementWeeklyEnabled  bool `json:"billing_statement_weekly_enabled"`
+	BillingStatementMonthlyEnabled bool `json:"billing_statement_monthly_enabled"`
 }
 
 type LoginAgreementDocument struct {

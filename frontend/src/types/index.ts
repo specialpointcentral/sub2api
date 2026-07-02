@@ -249,7 +249,6 @@ export interface PublicSettings {
   billing_statement_daily_enabled: boolean
   billing_statement_weekly_enabled: boolean
   billing_statement_monthly_enabled: boolean
-  server_timezone: string
 }
 
 export interface AuthResponse {
