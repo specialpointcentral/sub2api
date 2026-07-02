@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"mime"
 	"net"
 	"net/smtp"
 	"net/url"
@@ -187,11 +188,11 @@ const smtpIOTimeout = 20 * time.Second
 func (s *EmailService) SendEmailWithConfig(config *SMTPConfig, to, subject, body string) error {
 	// Sanitize all SMTP header fields to prevent header injection (CR/LF removal).
 	to = sanitizeEmailHeader(to)
-	subject = sanitizeEmailHeader(subject)
+	subject = encodeEmailHeaderText(subject)
 
 	from := sanitizeEmailHeader(config.From)
 	if config.FromName != "" {
-		from = fmt.Sprintf("%s <%s>", sanitizeEmailHeader(config.FromName), sanitizeEmailHeader(config.From))
+		from = fmt.Sprintf("%s <%s>", encodeEmailHeaderText(config.FromName), sanitizeEmailHeader(config.From))
 	}
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
@@ -205,6 +206,11 @@ func (s *EmailService) SendEmailWithConfig(config *SMTPConfig, to, subject, body
 	}
 
 	return s.sendMailPlain(addr, auth, config.From, to, []byte(msg), config.Host)
+}
+
+func encodeEmailHeaderText(value string) string {
+	value = sanitizeEmailHeader(value)
+	return mime.QEncoding.Encode("UTF-8", value)
 }
 
 // sendMailPlain sends mail without TLS using a dialer with timeout.
