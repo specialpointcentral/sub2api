@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -56,14 +57,14 @@ type BillingStatementUserPreference struct {
 	MonthlyEnabled bool `json:"monthly_enabled"`
 }
 
-// DefaultBillingStatementUserPreference returns the default preference (all disabled).
-// Existing users without an explicit preference JSON should not receive billing
-// statements until they opt in from their profile.
+// DefaultBillingStatementUserPreference intentionally enables every period.
+// Billing statement delivery is an opt-out product: users receive statements
+// until they explicitly disable the corresponding period.
 func DefaultBillingStatementUserPreference() BillingStatementUserPreference {
 	return BillingStatementUserPreference{
-		DailyEnabled:   false,
-		WeeklyEnabled:  false,
-		MonthlyEnabled: false,
+		DailyEnabled:   true,
+		WeeklyEnabled:  true,
+		MonthlyEnabled: true,
 	}
 }
 
@@ -82,6 +83,17 @@ func ParseBillingStatementUserPreference(raw string) BillingStatementUserPrefere
 // billingStatementUserPreferenceSettingKey returns the setting key for a user's billing preference.
 func billingStatementUserPreferenceSettingKey(userID int64) string {
 	return SettingKeyBillingStatementUserPreferencePrefix + strconv.FormatInt(userID, 10)
+}
+
+func initializeDefaultBillingStatementPreference(ctx context.Context, repo SettingRepository, userID int64) error {
+	if repo == nil || userID <= 0 {
+		return nil
+	}
+	data, err := json.Marshal(DefaultBillingStatementUserPreference())
+	if err != nil {
+		return err
+	}
+	return repo.Set(ctx, billingStatementUserPreferenceSettingKey(userID), string(data))
 }
 
 // ParseBillingStatementEmailConfig parses JSON into config, falling back to defaults.
@@ -167,6 +179,7 @@ type BillingStatement struct {
 const (
 	billingStatementLeaderLockKey = "billing_statement:leader"
 	billingStatementLeaderLockTTL = 5 * time.Minute
+	billingStatementRunTimeout    = billingStatementLeaderLockTTL - 30*time.Second
 
 	billingStatementLastRunKeyPrefix = "billing_statement:last_run:"
 	billingStatementTickInterval     = 1 * time.Minute
@@ -175,6 +188,15 @@ const (
 )
 
 var billingStatementCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+var billingStatementEmailSendTimeout = 120 * time.Second
+
+type billingStatementDef struct {
+	enabled  bool
+	kind     string
+	name     string
+	schedule string
+}
 
 type billingStatementRedisClient interface {
 	SetNX(ctx context.Context, key string, value any, expiration time.Duration) (bool, error)
@@ -297,7 +319,7 @@ func (s *BillingStatementEmailService) runOnce() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(s.stopCtx, 120*time.Second)
+	ctx, cancel := context.WithTimeout(s.baseContext(), billingStatementRunTimeout)
 	defer cancel()
 
 	// Read config from settings
@@ -320,56 +342,66 @@ func (s *BillingStatementEmailService) runOnce() {
 		now = now.In(s.loc)
 	}
 
-	type statementDef struct {
-		enabled  bool
-		kind     string
-		name     string
-		schedule string
-	}
-
-	defs := []statementDef{
+	defs := []billingStatementDef{
 		{enabled: billingCfg.DailyEnabled, kind: "daily", name: "日账单 / Daily Billing Statement", schedule: billingCfg.DailySchedule},
 		{enabled: billingCfg.WeeklyEnabled, kind: "weekly", name: "周账单 / Weekly Billing Statement", schedule: billingCfg.WeeklySchedule},
 		{enabled: billingCfg.MonthlyEnabled, kind: "monthly", name: "月账单 / Monthly Billing Statement", schedule: billingCfg.MonthlySchedule},
 	}
 
 	for _, d := range defs {
-		if !d.enabled {
-			continue
-		}
-		spec := strings.TrimSpace(d.schedule)
-		if spec == "" {
-			continue
-		}
-		sched, err := billingStatementCronParser.Parse(spec)
-		if err != nil {
-			log.Printf("[BillingStatement] invalid cron spec=%q for kind=%s: %v", spec, d.kind, err)
-			continue
-		}
-
-		lastRun := s.getLastRunAt(ctx, d.kind)
-		base := lastRun
-		if base.IsZero() {
-			base = now.Add(-1 * time.Minute)
-		}
-		next := sched.Next(base)
-		if next.IsZero() || next.After(now) {
-			continue
-		}
-		if !s.isEmailDeliveryConfigured(ctx) {
-			continue
-		}
-
-		// Time to run this statement. Only record last_run after the
-		// send cycle completes without the context being canceled/timing out,
-		// so interrupted runs remain eligible for retry on the next pass.
-		s.sendStatements(ctx, d.kind, d.name, now)
-		if ctx.Err() != nil {
-			log.Printf("[BillingStatement] send interrupted for kind=%s; last_run not updated: %v", d.kind, ctx.Err())
-			continue
-		}
-		s.setLastRunAt(ctx, d.kind, now)
+		s.runStatementKind(ctx, d, now)
 	}
+}
+
+func (s *BillingStatementEmailService) baseContext() context.Context {
+	if s != nil && s.stopCtx != nil {
+		return s.stopCtx
+	}
+	return context.Background()
+}
+
+func (s *BillingStatementEmailService) runStatementKind(parent context.Context, d billingStatementDef, now time.Time) {
+	if !d.enabled {
+		return
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	spec := strings.TrimSpace(d.schedule)
+	if spec == "" {
+		return
+	}
+	sched, err := billingStatementCronParser.Parse(spec)
+	if err != nil {
+		log.Printf("[BillingStatement] invalid cron spec=%q for kind=%s: %v", spec, d.kind, err)
+		return
+	}
+
+	lastRun := s.getLastRunAt(ctx, d.kind)
+	base := lastRun
+	if base.IsZero() {
+		base = now.Add(-1 * time.Minute)
+	}
+	next := sched.Next(base)
+	if next.IsZero() || next.After(now) {
+		return
+	}
+	if !s.isEmailDeliveryConfigured(ctx) {
+		return
+	}
+
+	// Time to run this statement. Only record last_run after the
+	// send cycle completes without the service context being canceled,
+	// so interrupted runs remain eligible for retry on the next pass.
+	s.sendStatements(ctx, d.kind, d.name, now)
+	if ctx.Err() != nil {
+		log.Printf("[BillingStatement] send interrupted for kind=%s; last_run not updated: %v", d.kind, ctx.Err())
+		return
+	}
+	s.setLastRunAt(ctx, d.kind, now)
 }
 
 func (s *BillingStatementEmailService) isEmailDeliveryConfigured(ctx context.Context) bool {
@@ -394,6 +426,9 @@ func (s *BillingStatementEmailService) loadConfig(ctx context.Context) BillingSt
 func (s *BillingStatementEmailService) sendStatements(ctx context.Context, kind string, periodName string, now time.Time) {
 	page := 1
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		users, pageResult, err := s.userRepo.List(ctx, pagination.PaginationParams{
 			Page:     page,
 			PageSize: billingStatementUserPageSize,
@@ -404,17 +439,29 @@ func (s *BillingStatementEmailService) sendStatements(ctx context.Context, kind 
 		}
 
 		for i := range users {
+			if ctx.Err() != nil {
+				return
+			}
 			user := &users[i]
 			if !isValidEmailForBilling(user.Email) {
 				continue
 			}
-			// Check user preference for this period kind
-			if !s.isUserPeriodEnabled(ctx, user.ID, kind) {
+			if !user.IsActive() {
 				continue
 			}
-			loc := s.userLocation(ctx, user.ID)
+			emailCtx, cancel := context.WithTimeout(ctx, billingStatementEmailSendTimeout)
+			// Check user preference for this period kind
+			if !s.isUserPeriodEnabled(emailCtx, user.ID, kind) {
+				cancel()
+				continue
+			}
+			loc := s.userLocation(emailCtx, user.ID)
 			start, end := billingStatementPeriodRange(kind, now, loc)
-			s.sendStatementToUser(ctx, user, periodName, start, end, loc)
+			s.sendStatementToUser(emailCtx, user, periodName, start, end, loc)
+			if err := emailCtx.Err(); err != nil && ctx.Err() == nil {
+				log.Printf("[BillingStatement] send timed out or canceled for kind=%s user=%d: %v", kind, user.ID, err)
+			}
+			cancel()
 		}
 
 		if pageResult == nil || page >= pageResult.Pages {
@@ -471,11 +518,12 @@ func startOfBillingStatementWeek(t time.Time, loc *time.Location) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day()-weekday+1, 0, 0, 0, 0, loc)
 }
 
-// isUserPeriodEnabled checks whether the user has opted in for the given period kind.
+// isUserPeriodEnabled applies the intentional opt-out default for billing
+// statements: a missing preference keeps every supported period enabled, while
+// an explicitly persisted false disables that period.
 func (s *BillingStatementEmailService) isUserPeriodEnabled(ctx context.Context, userID int64, kind string) bool {
 	raw, err := s.settingRepo.GetValue(ctx, billingStatementUserPreferenceSettingKey(userID))
-	if err != nil || strings.TrimSpace(raw) == "" {
-		// Default: no explicit user opt-in, do not send.
+	if err != nil && !errors.Is(err, ErrSettingNotFound) {
 		return false
 	}
 	pref := ParseBillingStatementUserPreference(raw)
@@ -486,9 +534,8 @@ func (s *BillingStatementEmailService) isUserPeriodEnabled(ctx context.Context, 
 		return pref.WeeklyEnabled
 	case "monthly":
 		return pref.MonthlyEnabled
-	default:
-		return true
 	}
+	return false
 }
 
 func (s *BillingStatementEmailService) sendStatementToUser(ctx context.Context, user *User, periodName string, start, end time.Time, loc *time.Location) {
@@ -541,10 +588,55 @@ func (s *BillingStatementEmailService) sendStatementToUser(ctx context.Context, 
 		return
 	}
 
+	deliveryKey := billingStatementDeliveryKey(user, stmt)
+	if s.billingStatementDeliveryExists(ctx, deliveryKey) {
+		return
+	}
 	body := buildBillingStatementEmailHTML(stmt)
 	if err := s.emailService.SendEmail(ctx, user.Email, subject, body); err != nil {
 		log.Printf("[BillingStatement] send email to %s failed: %v", user.Email, err)
+		return
 	}
+	if deliveryKey != "" && s.settingRepo != nil {
+		if err := s.settingRepo.Set(ctx, deliveryKey, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			log.Printf("[BillingStatement] record fallback delivery for %s failed: %v", user.Email, err)
+		}
+	}
+}
+
+func billingStatementDeliveryKey(user *User, stmt *BillingStatement) string {
+	if user == nil || stmt == nil {
+		return ""
+	}
+	return notificationEmailDeliveryKey(
+		NotificationEmailEventBillingStatement,
+		"billing_statement",
+		strconv.FormatInt(user.ID, 10),
+		user.Email,
+		billingStatementReminderKey(stmt),
+	)
+}
+
+func billingStatementReminderKey(stmt *BillingStatement) string {
+	if stmt == nil {
+		return ""
+	}
+	return stmt.PeriodName + ":" + stmt.Start.Format("2006-01-02") + ":" + stmt.End.Format("2006-01-02")
+}
+
+func (s *BillingStatementEmailService) billingStatementDeliveryExists(ctx context.Context, key string) bool {
+	if s == nil || s.settingRepo == nil || key == "" {
+		return false
+	}
+	raw, err := s.settingRepo.GetValue(ctx, key)
+	if err == nil {
+		return strings.TrimSpace(raw) != ""
+	}
+	if errors.Is(err, ErrSettingNotFound) {
+		return false
+	}
+	log.Printf("[BillingStatement] check fallback delivery key failed; skipping duplicate-prone send: %v", err)
+	return true
 }
 
 func (s *BillingStatementEmailService) sendStatementWithTemplate(ctx context.Context, user *User, stmt *BillingStatement) bool {
@@ -560,7 +652,7 @@ func (s *BillingStatementEmailService) sendStatementWithTemplate(ctx context.Con
 		UserID:         user.ID,
 		SourceType:     "billing_statement",
 		SourceID:       strconv.FormatInt(user.ID, 10),
-		ReminderKey:    stmt.PeriodName + ":" + start + ":" + end,
+		ReminderKey:    billingStatementReminderKey(stmt),
 		Variables: map[string]string{
 			"period_name":  stmt.PeriodName,
 			"period_start": start,
@@ -715,7 +807,8 @@ func buildBillingStatementEmailContentHTML(stmt *BillingStatement) string {
 		if line.Subscription != nil {
 			subStr = fmt.Sprintf("#%d", *line.Subscription)
 		}
-		_, _ = rows.WriteString(fmt.Sprintf(
+		_, _ = fmt.Fprintf(
+			&rows,
 			"<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%d</td><td>$%.4f</td><td>$%.4f</td><td>$%.4f</td></tr>",
 			billingStatementHTMLEscape(line.Model),
 			billingStatementHTMLEscape(billingMode),
@@ -726,7 +819,7 @@ func buildBillingStatementEmailContentHTML(stmt *BillingStatement) string {
 			line.TotalCost,
 			line.ActualCost,
 			line.Discount,
-		))
+		)
 	}
 
 	return fmt.Sprintf(`<table style="width:100%%;border-collapse:collapse;font-size:13px;margin-top:16px;">
