@@ -163,6 +163,18 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
+				var unsupportedErr *service.UnsupportedRequestedModelError
+				if errors.As(err, &unsupportedErr) {
+					h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", unsupportedErr.Error())
+					return
+				}
+				var deniedErr *service.ModelAccessDeniedError
+				if errors.As(err, &deniedErr) {
+					h.chatCompletionsErrorResponse(c, http.StatusForbidden, "permission_error", deniedErr.Error())
+					return
+				}
+			}
+			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, groupPlatform)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
