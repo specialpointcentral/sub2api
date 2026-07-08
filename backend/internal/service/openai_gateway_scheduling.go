@@ -332,6 +332,80 @@ func (e openAINoAvailableSelectionError) Unwrap() error {
 	return ErrNoAvailableAccounts
 }
 
+type openAIClassifiedSelectionError struct {
+	noAvailable    error
+	classification error
+}
+
+func (e openAIClassifiedSelectionError) Error() string {
+	return e.noAvailable.Error()
+}
+
+func (e openAIClassifiedSelectionError) Unwrap() []error {
+	return []error{e.noAvailable, e.classification}
+}
+
+func newOpenAIClassifiedSelectionError(requestedModel, details string, classification error) error {
+	return openAIClassifiedSelectionError{
+		noAvailable:    noAvailableOpenAISelectionError(requestedModel, false, details),
+		classification: classification,
+	}
+}
+
+func (s *OpenAIGatewayService) classifyOpenAINoCandidateError(ctx context.Context, groupID *int64, accounts []Account, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, needsUpstreamCheck bool, details string) error {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return nil
+	}
+
+	total := 0
+	modelUnsupported := 0
+	upstreamRestricted := 0
+	for i := range accounts {
+		account := &accounts[i]
+		if excludedIDs != nil {
+			if _, excluded := excludedIDs[account.ID]; excluded {
+				continue
+			}
+		}
+		if !account.IsOpenAI() {
+			continue
+		}
+		total++
+		if !account.IsSchedulable() || s.isOpenAIAccountRuntimeBlocked(account) {
+			continue
+		}
+		if account.isModelRateLimitedWithContext(ctx, requestedModel) {
+			continue
+		}
+		if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
+			continue
+		}
+		if !account.IsModelSupported(requestedModel) {
+			modelUnsupported++
+			continue
+		}
+		if !accountSupportsOpenAICapabilities(account, requiredCapability, "") {
+			continue
+		}
+		if requireCompact && openAICompactSupportTier(account) == 0 {
+			continue
+		}
+		if needsUpstreamCheck && groupID != nil && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel, requireCompact) {
+			upstreamRestricted++
+			continue
+		}
+	}
+
+	if total > 0 && modelUnsupported == total {
+		return newOpenAIClassifiedSelectionError(requestedModel, details, unsupportedRequestedModelError(requestedModel))
+	}
+	if total > 0 && upstreamRestricted == total {
+		return newOpenAIClassifiedSelectionError(requestedModel, details, modelAccessDeniedError(requestedModel, "channel upstream restriction"))
+	}
+	return nil
+}
+
 // openAICompactSupportTier classifies an OpenAI-compatible account by compact capability.
 // 0 = explicitly unsupported, 1 = unknown / not yet probed, 2 = explicitly supported.
 func openAICompactSupportTier(account *Account) int {
@@ -883,7 +957,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),
 			"model", requestedModel)
-		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+		return nil, modelAccessDeniedError(requestedModel, "channel pricing restriction")
 	}
 
 	// 1. 尝试粘性会话命中
@@ -904,7 +978,12 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	selected, compactBlocked, filterStats := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, preferLowUpstreamRate)
 
 	if selected == nil {
-		return nil, noAvailableOpenAISelectionError(requestedModel, compactBlocked, filterStats.summary(""))
+		needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
+		details := filterStats.summary("")
+		if classifiedErr := s.classifyOpenAINoCandidateError(ctx, groupID, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, needsUpstreamCheck, details); classifiedErr != nil {
+			return nil, classifiedErr
+		}
+		return nil, noAvailableOpenAISelectionError(requestedModel, compactBlocked, details)
 	}
 
 	hydrated, err := s.hydrateSelectedAccount(ctx, selected)
@@ -1116,7 +1195,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		slog.Warn("channel pricing restriction blocked request",
 			"group_id", derefGroupID(groupID),
 			"model", requestedModel)
-		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+		return nil, modelAccessDeniedError(requestedModel, "channel pricing restriction")
 	}
 
 	cfg := s.schedulingConfig()
@@ -1268,6 +1347,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	if len(candidates) == 0 {
+		if classifiedErr := s.classifyOpenAINoCandidateError(ctx, groupID, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, needsUpstreamCheck, filterStats.summary("")); classifiedErr != nil {
+			return nil, classifiedErr
+		}
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, filterStats.summary(""))
 	}
 	rateOrder := openAILegacyUpstreamRateOrder{}
@@ -1458,6 +1540,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 	if requireCompact && baseCandidateCount > 0 {
 		return nil, ErrNoAvailableCompactAccounts
+	}
+	if classifiedErr := s.classifyOpenAINoCandidateError(ctx, groupID, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, needsUpstreamCheck, ""); classifiedErr != nil {
+		return nil, classifiedErr
 	}
 	return nil, ErrNoAvailableAccounts
 }
