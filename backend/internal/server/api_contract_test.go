@@ -2646,6 +2646,10 @@ func (r *stubUsageLogRepo) GetRecentAccountUsers(ctx context.Context, accountID 
 	return []service.RecentAccountUser{}, nil
 }
 
+func (r *stubUsageLogRepo) GetAccountUsersByTimeRange(ctx context.Context, accountID int64, startTime, endTime time.Time) ([]service.RecentAccountUser, error) {
+	return []service.RecentAccountUser{}, nil
+}
+
 func (r *stubUsageLogRepo) GetStatsWithFilters(ctx context.Context, filters usagestats.UsageLogFilters) (*usagestats.UsageStats, error) {
 	logs, _, err := r.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 100000}, filters)
 	if err != nil {
