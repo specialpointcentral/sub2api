@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -72,6 +73,8 @@ type UsageLogRepository interface {
 
 	// Account stats
 	GetAccountUsageStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.AccountUsageStatsResponse, error)
+	GetRecentAccountUsers(ctx context.Context, accountID int64, minutes int) ([]RecentAccountUser, error)
+	GetAccountUsersByTimeRange(ctx context.Context, accountID int64, startTime, endTime time.Time) ([]RecentAccountUser, error)
 
 	// Aggregated stats (optimized)
 	GetUserStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
@@ -79,6 +82,17 @@ type UsageLogRepository interface {
 	GetAccountStatsAggregated(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetModelStatsAggregated(ctx context.Context, modelName string, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetDailyStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) ([]map[string]any, error)
+}
+
+// RecentAccountUser represents a user who recently or currently used an account.
+type RecentAccountUser struct {
+	UserID          int64     `json:"user_id"`
+	Email           string    `json:"email"`
+	Requests        int64     `json:"requests"`
+	AccountCost     float64   `json:"account_cost"`
+	UserCost        float64   `json:"user_cost"`
+	LastUsedAt      time.Time `json:"last_used_at"`
+	CurrentRequests int64     `json:"current_requests"`
 }
 
 type accountWindowStatsBatchReader interface {
@@ -1599,4 +1613,63 @@ func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64
 // 用于账号列表页面显示当前窗口费用
 func (s *AccountUsageService) GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error) {
 	return s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
+}
+
+func (s *AccountUsageService) GetRecentAccountUsers(ctx context.Context, accountID int64, minutes int) ([]RecentAccountUser, error) {
+	logUsers, err := s.usageLogRepo.GetRecentAccountUsers(ctx, accountID, minutes)
+	if err != nil {
+		return nil, err
+	}
+
+	var activeUsers map[int64]int
+	if s.concurrencyService != nil {
+		activeUsers, _ = s.concurrencyService.GetAccountActiveUserConcurrency(ctx, accountID)
+	}
+	if len(activeUsers) == 0 {
+		return logUsers, nil
+	}
+
+	userIndex := make(map[int64]int, len(logUsers)+len(activeUsers))
+	for i := range logUsers {
+		userIndex[logUsers[i].UserID] = i
+	}
+
+	now := time.Now()
+	for userID, count := range activeUsers {
+		if userID <= 0 || count <= 0 {
+			continue
+		}
+		if idx, ok := userIndex[userID]; ok {
+			logUsers[idx].CurrentRequests = int64(count)
+			continue
+		}
+
+		email := ""
+		if s.userRepo != nil {
+			if user, userErr := s.userRepo.GetByID(ctx, userID); userErr == nil && user != nil {
+				email = user.Email
+			}
+		}
+		user := RecentAccountUser{
+			UserID:          userID,
+			Email:           email,
+			CurrentRequests: int64(count),
+			LastUsedAt:      now,
+		}
+		logUsers = append(logUsers, user)
+		userIndex[userID] = len(logUsers) - 1
+	}
+
+	sort.Slice(logUsers, func(i, j int) bool {
+		if logUsers[i].CurrentRequests != logUsers[j].CurrentRequests {
+			return logUsers[i].CurrentRequests > logUsers[j].CurrentRequests
+		}
+		return logUsers[i].LastUsedAt.After(logUsers[j].LastUsedAt)
+	})
+
+	return logUsers, nil
+}
+
+func (s *AccountUsageService) GetAccountUsersByTimeRange(ctx context.Context, accountID int64, startTime, endTime time.Time) ([]RecentAccountUser, error) {
+	return s.usageLogRepo.GetAccountUsersByTimeRange(ctx, accountID, startTime, endTime)
 }
