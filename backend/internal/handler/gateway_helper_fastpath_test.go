@@ -44,6 +44,10 @@ func (m *concurrencyCacheMock) GetAccountConcurrencyBatch(ctx context.Context, a
 	return result, nil
 }
 
+func (m *concurrencyCacheMock) GetAccountActiveUserConcurrency(ctx context.Context, accountID int64) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
+
 func (m *concurrencyCacheMock) IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
 	return true, nil
 }
