@@ -738,9 +738,9 @@ func TestOpenAISelectAccountForModelWithExclusions_NoModelSupport(t *testing.T) 
 	if acc != nil {
 		t.Fatalf("expected nil account for unsupported model")
 	}
-	if !strings.Contains(err.Error(), "supporting model") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	var unsupportedErr *UnsupportedRequestedModelError
+	require.ErrorAs(t, err, &unsupportedErr)
+	require.Equal(t, "gpt-4", unsupportedErr.Model)
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_LoadBatchErrorFallback(t *testing.T) {
