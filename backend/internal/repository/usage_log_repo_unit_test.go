@@ -43,6 +43,56 @@ func TestSafeDateFormat(t *testing.T) {
 	}
 }
 
+func TestAccountUsageTrendBucketForRange(t *testing.T) {
+	base := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name      string
+		duration  time.Duration
+		wantHours int
+		wantDate  string
+		wantLabel string
+	}{
+		{
+			name:      "one day uses hourly buckets",
+			duration:  24 * time.Hour,
+			wantHours: 1,
+			wantDate:  "YYYY-MM-DD HH24:MI",
+			wantLabel: "MM/DD HH24:MI",
+		},
+		{
+			name:      "two days uses hourly buckets",
+			duration:  48 * time.Hour,
+			wantHours: 1,
+			wantDate:  "YYYY-MM-DD HH24:MI",
+			wantLabel: "MM/DD HH24:MI",
+		},
+		{
+			name:      "seven days uses six hour buckets",
+			duration:  7 * 24 * time.Hour,
+			wantHours: 6,
+			wantDate:  "YYYY-MM-DD HH24:MI",
+			wantLabel: "MM/DD HH24:MI",
+		},
+		{
+			name:      "month range uses daily buckets",
+			duration:  31 * 24 * time.Hour,
+			wantHours: 24,
+			wantDate:  "YYYY-MM-DD",
+			wantLabel: "MM/DD",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := accountUsageTrendBucketForRange(base, base.Add(tc.duration))
+			require.Equal(t, tc.wantHours, got.hours)
+			require.Equal(t, tc.wantDate, got.dateFormat)
+			require.Equal(t, tc.wantLabel, got.labelFmt)
+		})
+	}
+}
+
 func TestBuildUsageLogBatchInsertQuery_UsesConflictDoNothing(t *testing.T) {
 	log := &service.UsageLog{
 		UserID:       1,

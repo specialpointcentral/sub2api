@@ -17,6 +17,38 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type accountUsageTrendBucket struct {
+	hours      int
+	dateFormat string
+	labelFmt   string
+}
+
+func accountUsageTrendBucketForRange(startTime, endTime time.Time) accountUsageTrendBucket {
+	duration := endTime.Sub(startTime)
+	switch {
+	case duration <= 48*time.Hour:
+		return accountUsageTrendBucket{hours: 1, dateFormat: "YYYY-MM-DD HH24:MI", labelFmt: "MM/DD HH24:MI"}
+	case duration <= 14*24*time.Hour:
+		return accountUsageTrendBucket{hours: 6, dateFormat: "YYYY-MM-DD HH24:MI", labelFmt: "MM/DD HH24:MI"}
+	default:
+		return accountUsageTrendBucket{hours: 24, dateFormat: "YYYY-MM-DD", labelFmt: "MM/DD"}
+	}
+}
+
+func accountUsageDailyTrendBucket() accountUsageTrendBucket {
+	return accountUsageTrendBucket{hours: 24, dateFormat: "YYYY-MM-DD", labelFmt: "MM/DD"}
+}
+
+func accountUsageStatsTimezone(startTime time.Time) string {
+	if loc := startTime.Location(); loc != nil {
+		name := loc.String()
+		if name != "" && name != "Local" {
+			return name
+		}
+	}
+	return resolveUsageStatsTimezone()
+}
+
 // GetUserStatsAggregated returns aggregated usage statistics for a user using database-level aggregation
 func (r *usageLogRepository) GetUserStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	query := `
@@ -961,28 +993,51 @@ func (r *usageLogRepository) GetUpstreamEndpointStatsWithFilters(ctx context.Con
 	return r.getEndpointStatsByColumnWithFilters(ctx, "upstream_endpoint", startTime, endTime, userID, apiKeyID, accountID, groupID, model, "", requestType, stream, billingType, "")
 }
 
-// GetAccountUsageStats returns comprehensive usage statistics for an account over a time range
-func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (resp *AccountUsageStatsResponse, err error) {
-	daysCount := int(endTime.Sub(startTime).Hours()/24) + 1
-	if daysCount <= 0 {
-		daysCount = 30
-	}
-
+func (r *usageLogRepository) getAccountUsageHistory(ctx context.Context, accountID int64, startTime, endTime time.Time, bucket accountUsageTrendBucket) (history []AccountUsageHistory, err error) {
+	tzName := accountUsageStatsTimezone(startTime)
 	query := `
+		WITH localized AS (
+			SELECT
+				created_at AT TIME ZONE $4 AS local_created_at,
+				input_tokens,
+				output_tokens,
+				cache_creation_tokens,
+				cache_read_tokens,
+				total_cost,
+				account_stats_cost,
+				account_rate_multiplier,
+				actual_cost
+			FROM usage_logs
+			WHERE account_id = $1 AND created_at >= $2 AND created_at < $3
+		), bucketed AS (
+			SELECT
+				date_trunc('day', local_created_at) +
+					floor(EXTRACT(EPOCH FROM (local_created_at - date_trunc('day', local_created_at))) / ($5::int * 3600))::int *
+					($5::int * INTERVAL '1 hour') AS bucket_start,
+				input_tokens,
+				output_tokens,
+				cache_creation_tokens,
+				cache_read_tokens,
+				total_cost,
+				account_stats_cost,
+				account_rate_multiplier,
+				actual_cost
+			FROM localized
+		)
 		SELECT
-			TO_CHAR(created_at, 'YYYY-MM-DD') as date,
+			TO_CHAR(bucket_start, $6) as date,
+			TO_CHAR(bucket_start, $7) as label,
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
 			COALESCE(SUM(total_cost), 0) as cost,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as actual_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
-		FROM usage_logs
-		WHERE account_id = $1 AND created_at >= $2 AND created_at < $3
-		GROUP BY date
-		ORDER BY date ASC
+		FROM bucketed
+		GROUP BY bucket_start
+		ORDER BY bucket_start ASC
 	`
 
-	rows, err := r.sql.QueryContext(ctx, query, accountID, startTime, endTime)
+	rows, err := r.sql.QueryContext(ctx, query, accountID, startTime, endTime, tzName, bucket.hours, bucket.dateFormat, bucket.labelFmt)
 	if err != nil {
 		return nil, err
 	}
@@ -991,25 +1046,25 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		// 同时清空返回值，避免误用不完整结果。
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
 			err = closeErr
-			resp = nil
+			history = nil
 		}
 	}()
 
-	history := make([]AccountUsageHistory, 0)
+	history = make([]AccountUsageHistory, 0)
 	for rows.Next() {
 		var date string
+		var label string
 		var requests int64
 		var tokens int64
 		var cost float64
 		var actualCost float64
 		var userCost float64
-		if err = rows.Scan(&date, &requests, &tokens, &cost, &actualCost, &userCost); err != nil {
+		if err = rows.Scan(&date, &label, &requests, &tokens, &cost, &actualCost, &userCost); err != nil {
 			return nil, err
 		}
-		t, _ := time.Parse("2006-01-02", date)
 		history = append(history, AccountUsageHistory{
 			Date:       date,
-			Label:      t.Format("01/02"),
+			Label:      label,
 			Requests:   requests,
 			Tokens:     tokens,
 			Cost:       cost,
@@ -1020,13 +1075,35 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
+	return history, nil
+}
+
+// GetAccountUsageStats returns comprehensive usage statistics for an account over a time range
+func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (resp *AccountUsageStatsResponse, err error) {
+	daysCount := int(endTime.Sub(startTime).Hours() / 24)
+	if daysCount <= 0 {
+		daysCount = 30
+	}
+
+	history, err := r.getAccountUsageHistory(ctx, accountID, startTime, endTime, accountUsageTrendBucketForRange(startTime, endTime))
+	if err != nil {
+		return nil, err
+	}
+
+	summaryHistory := history
+	if accountUsageTrendBucketForRange(startTime, endTime).hours != 24 {
+		summaryHistory, err = r.getAccountUsageHistory(ctx, accountID, startTime, endTime, accountUsageDailyTrendBucket())
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	var totalAccountCost, totalUserCost, totalStandardCost float64
 	var totalRequests, totalTokens int64
 	var highestCostDay, highestRequestDay *AccountUsageHistory
 
-	for i := range history {
-		h := &history[i]
+	for i := range summaryHistory {
+		h := &summaryHistory[i]
 		totalAccountCost += h.ActualCost
 		totalUserCost += h.UserCost
 		totalStandardCost += h.Cost
@@ -1041,7 +1118,7 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		}
 	}
 
-	actualDaysUsed := len(history)
+	actualDaysUsed := len(summaryHistory)
 	if actualDaysUsed == 0 {
 		actualDaysUsed = 1
 	}
@@ -1068,8 +1145,8 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 	}
 
 	todayStr := timezone.Now().Format("2006-01-02")
-	for i := range history {
-		if history[i].Date == todayStr {
+	for i := range summaryHistory {
+		if summaryHistory[i].Date == todayStr {
 			summary.Today = &struct {
 				Date     string  `json:"date"`
 				Cost     float64 `json:"cost"`
@@ -1077,11 +1154,11 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 				Requests int64   `json:"requests"`
 				Tokens   int64   `json:"tokens"`
 			}{
-				Date:     history[i].Date,
-				Cost:     history[i].ActualCost,
-				UserCost: history[i].UserCost,
-				Requests: history[i].Requests,
-				Tokens:   history[i].Tokens,
+				Date:     summaryHistory[i].Date,
+				Cost:     summaryHistory[i].ActualCost,
+				UserCost: summaryHistory[i].UserCost,
+				Requests: summaryHistory[i].Requests,
+				Tokens:   summaryHistory[i].Tokens,
 			}
 			break
 		}
