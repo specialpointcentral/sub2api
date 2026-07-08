@@ -20,7 +20,7 @@
           <div>
             <div class="font-semibold text-gray-900 dark:text-gray-100">{{ account.name }}</div>
             <div class="text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.last30DaysUsage') }}
+              {{ selectedRangeLabel }}
             </div>
           </div>
         </div>
@@ -36,6 +36,48 @@
         </span>
       </div>
 
+      <div
+        v-if="account"
+        class="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-800"
+      >
+        <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.stats.dateRange') }}
+        </span>
+        <button
+          v-for="range in dateRangeOptions"
+          :key="range.key"
+          type="button"
+          class="rounded-lg border px-3 py-1.5 text-xs transition-colors"
+          :class="currentRange === range.key
+            ? 'border-primary-500 bg-primary-500 text-white'
+            : 'border-gray-200 bg-white text-gray-700 hover:border-primary-300 dark:border-dark-600 dark:bg-dark-900 dark:text-dark-200 dark:hover:border-dark-500'"
+          @click="setStatsRange(range.key)"
+        >
+          {{ range.label }}
+        </button>
+        <div v-if="currentRange === 'custom'" class="ml-1 flex flex-wrap items-center gap-2">
+          <input
+            v-model="customStartDate"
+            type="date"
+            class="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-900 dark:border-dark-600 dark:bg-dark-900 dark:text-white"
+          />
+          <span class="text-xs text-gray-400">-</span>
+          <input
+            v-model="customEndDate"
+            type="date"
+            class="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-900 dark:border-dark-600 dark:bg-dark-900 dark:text-white"
+          />
+          <button
+            type="button"
+            class="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-dark-600"
+            :disabled="!canApplyCustomRange"
+            @click="applyCustomRange"
+          >
+            {{ t('admin.accounts.stats.apply') }}
+          </button>
+        </div>
+      </div>
+
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <LoadingSpinner />
@@ -44,7 +86,7 @@
       <template v-else-if="stats">
         <!-- Row 1: Main Stats Cards -->
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <!-- 30-Day Total Cost -->
+          <!-- Total Cost -->
           <div
             class="card border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-4 dark:border-emerald-800/30 dark:from-emerald-900/10 dark:to-dark-700"
           >
@@ -70,7 +112,7 @@
             </p>
           </div>
 
-          <!-- 30-Day Total Requests -->
+          <!-- Total Requests -->
           <div
             class="card border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 dark:border-blue-800/30 dark:from-blue-900/10 dark:to-dark-700"
           >
@@ -154,29 +196,29 @@
           </div>
         </div>
 
-        <!-- Row 2: Today, Highest Cost, Highest Requests -->
+        <!-- Row 2: Selected Range, Highest Cost, Highest Requests -->
         <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <!-- Today Overview -->
+          <!-- Selected Range Overview -->
           <div class="card p-4">
             <div class="mb-3 flex items-center gap-2">
               <div class="rounded-lg bg-cyan-100 p-1.5 dark:bg-cyan-900/30">
                 <Icon name="clock" size="sm" class="text-cyan-600 dark:text-cyan-400" />
               </div>
               <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
-                t('admin.accounts.stats.todayOverview')
+                t('admin.accounts.stats.selectedRangeOverview')
               }}</span>
             </div>
             <div class="space-y-2">
               <div class="flex items-center justify-between">
                 <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.accountBilled') }}</span>
                 <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >${{ formatCost(stats.summary.today?.cost || 0) }}</span
+                  >${{ formatCost(stats.summary.total_cost || 0) }}</span
                 >
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('usage.userBilled') }}</span>
                 <span class="text-sm font-semibold text-gray-900 dark:text-white"
-                  >${{ formatCost(stats.summary.today?.user_cost || 0) }}</span
+                  >${{ formatCost(stats.summary.total_user_cost || 0) }}</span
                 >
               </div>
               <div class="flex items-center justify-between">
@@ -184,7 +226,7 @@
                   t('admin.accounts.stats.requests')
                 }}</span>
                 <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
-                  formatNumber(stats.summary.today?.requests || 0)
+                  formatNumber(stats.summary.total_requests || 0)
                 }}</span>
               </div>
               <div class="flex items-center justify-between">
@@ -192,7 +234,7 @@
                   t('admin.accounts.stats.tokens')
                 }}</span>
                 <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
-                  formatTokens(stats.summary.today?.tokens || 0)
+                  formatTokens(stats.summary.total_tokens || 0)
                 }}</span>
               </div>
             </div>
@@ -392,6 +434,138 @@
           </div>
         </div>
 
+        <!-- Account Users -->
+        <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div class="card p-4">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                {{ t('admin.accounts.stats.currentUsers') }}
+              </h3>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.stats.currentUsersHint') }}
+              </span>
+            </div>
+            <div v-if="usersLoading" class="flex items-center justify-center py-8">
+              <LoadingSpinner />
+            </div>
+            <div
+              v-else-if="recentUsers.length === 0"
+              class="rounded-lg border border-dashed border-gray-200 py-6 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400"
+            >
+              {{ t('admin.accounts.stats.noRecentUsers') }}
+            </div>
+            <div v-else class="overflow-x-auto">
+              <table class="w-full min-w-[720px] divide-y divide-gray-200 text-sm dark:divide-dark-700">
+                <thead class="bg-gray-50 dark:bg-dark-800">
+                  <tr>
+                    <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('admin.accounts.stats.user') }}
+                    </th>
+                    <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('admin.accounts.stats.email') }}
+                    </th>
+                    <th class="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('admin.accounts.stats.currentRequests') }}
+                    </th>
+                    <th class="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('usage.accountBilled') }}
+                    </th>
+                    <th class="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('usage.userBilled') }}
+                    </th>
+                    <th class="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('admin.accounts.stats.lastUsedAt') }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+                  <tr
+                    v-for="user in recentUsers"
+                    :key="`recent-${user.user_id}`"
+                    :class="user.current_requests > 0 ? 'bg-green-50 dark:bg-green-900/10' : ''"
+                  >
+                    <td class="whitespace-nowrap px-3 py-2 text-gray-900 dark:text-white">
+                      <span v-if="user.current_requests > 0" class="mr-2 inline-block h-2 w-2 rounded-full bg-green-500"></span>
+                      #{{ user.user_id }}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">{{ user.email || '-' }}</td>
+                    <td class="whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-900 dark:text-white">
+                      {{ user.current_requests || 0 }}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-900 dark:text-white">
+                      ${{ formatCost(user.account_cost || 0) }}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-900 dark:text-white">
+                      ${{ formatCost(user.user_cost || 0) }}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2 text-right text-gray-500 dark:text-gray-400">
+                      {{ formatDateTime(user.last_used_at) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card p-4">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                {{ t('admin.accounts.stats.rangeUsers') }}
+              </h3>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ selectedRangeLabel }}
+              </span>
+            </div>
+            <div v-if="usersLoading" class="flex items-center justify-center py-8">
+              <LoadingSpinner />
+            </div>
+            <div
+              v-else-if="rangeUsers.length === 0"
+              class="rounded-lg border border-dashed border-gray-200 py-6 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400"
+            >
+              {{ t('admin.accounts.stats.noRangeUsers') }}
+            </div>
+            <div v-else class="overflow-x-auto">
+              <table class="w-full min-w-[680px] divide-y divide-gray-200 text-sm dark:divide-dark-700">
+                <thead class="bg-gray-50 dark:bg-dark-800">
+                  <tr>
+                    <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('admin.accounts.stats.user') }}
+                    </th>
+                    <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('admin.accounts.stats.email') }}
+                    </th>
+                    <th class="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('admin.accounts.stats.requests') }}
+                    </th>
+                    <th class="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('usage.accountBilled') }}
+                    </th>
+                    <th class="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
+                      {{ t('usage.userBilled') }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+                  <tr v-for="user in rangeUsers" :key="`range-${user.user_id}`">
+                    <td class="whitespace-nowrap px-3 py-2 text-gray-900 dark:text-white">#{{ user.user_id }}</td>
+                    <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">{{ user.email || '-' }}</td>
+                    <td class="whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-900 dark:text-white">
+                      {{ formatNumber(user.requests || 0) }}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-900 dark:text-white">
+                      ${{ formatCost(user.account_cost || 0) }}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-900 dark:text-white">
+                      ${{ formatCost(user.user_cost || 0) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Usage Trend Chart -->
         <div class="card p-4">
           <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
@@ -468,6 +642,7 @@ import ModelDistributionChart from '@/components/charts/ModelDistributionChart.v
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { adminAPI } from '@/api/admin'
+import type { AccountStatsParams, RecentAccountUser } from '@/api/admin/accounts'
 import type { Account, AccountUsageStatsResponse } from '@/types'
 
 ChartJS.register(
@@ -493,7 +668,14 @@ const emit = defineEmits<{
 }>()
 
 const loading = ref(false)
+const usersLoading = ref(false)
 const stats = ref<AccountUsageStatsResponse | null>(null)
+const recentUsers = ref<RecentAccountUser[]>([])
+const rangeUsers = ref<RecentAccountUser[]>([])
+type StatsRangeKey = 'today' | 'yesterday' | '7d' | '30d' | 'month' | '90d' | 'custom'
+const currentRange = ref<StatsRangeKey>('30d')
+const customStartDate = ref('')
+const customEndDate = ref('')
 
 // Dark mode detection
 const isDarkMode = computed(() => {
@@ -505,6 +687,84 @@ const chartColors = computed(() => ({
   text: isDarkMode.value ? '#e5e7eb' : '#374151',
   grid: isDarkMode.value ? '#374151' : '#e5e7eb'
 }))
+
+const dateRangeOptions = computed(() => [
+  { key: 'today' as const, label: t('admin.accounts.stats.dateRangeToday') },
+  { key: 'yesterday' as const, label: t('admin.accounts.stats.dateRangeYesterday') },
+  { key: '7d' as const, label: t('admin.accounts.stats.dateRange7d') },
+  { key: '30d' as const, label: t('admin.accounts.stats.dateRange30d') },
+  { key: 'month' as const, label: t('admin.accounts.stats.dateRangeMonth') },
+  { key: '90d' as const, label: t('admin.accounts.stats.dateRange90d') },
+  { key: 'custom' as const, label: t('admin.accounts.stats.dateRangeCustom') }
+])
+
+const browserTimezone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone
+
+const addCalendarDays = (date: Date, days: number): Date => {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+const selectedDateParams = computed<AccountStatsParams>(() => {
+  if (currentRange.value === 'custom') {
+    return {
+      start_date: customStartDate.value || undefined,
+      end_date: customEndDate.value || undefined,
+      timezone: browserTimezone()
+    }
+  }
+
+  const today = new Date()
+  let start = new Date(today)
+  let endDate = new Date(today)
+
+  switch (currentRange.value) {
+    case 'yesterday':
+      start = addCalendarDays(today, -1)
+      endDate = start
+      break
+    case '7d':
+      start = addCalendarDays(today, -6)
+      break
+    case '90d':
+      start = addCalendarDays(today, -89)
+      break
+    case 'month':
+      start = new Date(today.getFullYear(), today.getMonth(), 1)
+      break
+    case '30d':
+      start = addCalendarDays(today, -29)
+      break
+    case 'today':
+    default:
+      start = new Date(today)
+      break
+  }
+
+  return {
+    start_date: formatDateParam(start),
+    end_date: formatDateParam(endDate),
+    timezone: browserTimezone()
+  }
+})
+
+const selectedRangeLabel = computed(() => {
+  if (currentRange.value === 'custom') {
+    if (customStartDate.value && customEndDate.value) {
+      return `${customStartDate.value} - ${customEndDate.value}`
+    }
+    return t('admin.accounts.stats.dateRangeCustom')
+  }
+  const option = dateRangeOptions.value.find((range) => range.key === currentRange.value)
+  return option?.label || t('admin.accounts.stats.dateRange30d')
+})
+
+const canApplyCustomRange = computed(() => Boolean(
+  customStartDate.value &&
+  customEndDate.value &&
+  customStartDate.value <= customEndDate.value
+))
 
 // Line chart data
 const trendChartData = computed(() => {
@@ -650,16 +910,23 @@ watch(
       await loadStats()
     } else {
       stats.value = null
+      recentUsers.value = []
+      rangeUsers.value = []
     }
   }
 )
 
 const loadStats = async () => {
   if (!props.account) return
+  const rangeParams = selectedDateParams.value
+  if (!rangeParams.start_date || !rangeParams.end_date) return
 
   loading.value = true
   try {
-    stats.value = await adminAPI.accounts.getStats(props.account.id, 30)
+    await Promise.all([
+      loadUsageStats(props.account.id, rangeParams),
+      loadUserStats(props.account.id, rangeParams)
+    ])
   } catch (error) {
     console.error('Failed to load account stats:', error)
     stats.value = null
@@ -668,11 +935,70 @@ const loadStats = async () => {
   }
 }
 
+const loadUsageStats = async (accountId: number, rangeParams: AccountStatsParams) => {
+  stats.value = await adminAPI.accounts.getStats(accountId, rangeParams)
+}
+
+const loadUserStats = async (accountId: number, rangeParams: AccountStatsParams) => {
+  usersLoading.value = true
+  try {
+    const [recent, range] = await Promise.all([
+      adminAPI.accounts.getRecentUsers(accountId),
+      adminAPI.accounts.getRecentUsers(accountId, rangeParams)
+    ])
+    recentUsers.value = recent.users || []
+    rangeUsers.value = range.users || []
+  } catch (error) {
+    console.error('Failed to load account users:', error)
+    recentUsers.value = []
+    rangeUsers.value = []
+  } finally {
+    usersLoading.value = false
+  }
+}
+
+const setStatsRange = async (range: StatsRangeKey) => {
+  if (range === 'custom') {
+    if (!customStartDate.value || !customEndDate.value) {
+      const today = new Date()
+      const params = {
+        start_date: formatDateParam(addCalendarDays(today, -29)),
+        end_date: formatDateParam(today)
+      }
+      customStartDate.value = params.start_date || ''
+      customEndDate.value = params.end_date || ''
+    }
+    currentRange.value = range
+    return
+  }
+  currentRange.value = range
+  await loadStats()
+}
+
+const applyCustomRange = async () => {
+  if (!canApplyCustomRange.value) return
+  await loadStats()
+}
+
 const handleClose = () => {
   emit('close')
 }
 
 // Format helpers
+const formatDateParam = (date: Date): string => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const formatDateTime = (value: string): string => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return date.toLocaleString()
+}
+
 const formatCost = (value: number): string => {
   if (value >= 1000) {
     return (value / 1000).toFixed(2) + 'K'
