@@ -9,10 +9,12 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -22,11 +24,12 @@ import (
 // 使用有序集合存储槽位，按时间戳清理过期条目
 type ConcurrencyCache interface {
 	// 账号槽位管理
-	// 键格式: concurrency:account:{accountID}（有序集合，成员为 requestID）
+	// 键格式: concurrency:account:{accountID}（有序集合，成员为 requestID 或 requestID|u:{userID}）
 	AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error)
 	ReleaseAccountSlot(ctx context.Context, accountID int64, requestID string) error
 	GetAccountConcurrency(ctx context.Context, accountID int64) (int, error)
 	GetAccountConcurrencyBatch(ctx context.Context, accountIDs []int64) (map[int64]int, error)
+	GetAccountActiveUserConcurrency(ctx context.Context, accountID int64) (map[int64]int, error)
 
 	// 账号等待队列（账号级）
 	IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error)
@@ -209,6 +212,51 @@ func generateRequestID() string {
 	return requestIDPrefix + "-" + strconv.FormatUint(seq, 36)
 }
 
+// EncodeAccountSlotMember encodes optional user metadata into an account slot member.
+// The requestID prefix stays first so startup cleanup by process prefix keeps working.
+func EncodeAccountSlotMember(requestID string, userID int64) string {
+	if userID <= 0 {
+		return requestID
+	}
+	return requestID + "|u:" + strconv.FormatInt(userID, 10)
+}
+
+// ParseAccountSlotMemberUserID extracts userID metadata from an account slot member.
+func ParseAccountSlotMemberUserID(member string) int64 {
+	idx := strings.Index(member, "|u:")
+	if idx < 0 {
+		return 0
+	}
+	userID, err := strconv.ParseInt(member[idx+3:], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return userID
+}
+
+// ExtractRequestIDFromMember returns the requestID portion of an account slot member.
+func ExtractRequestIDFromMember(member string) string {
+	if idx := strings.Index(member, "|u:"); idx >= 0 {
+		return member[:idx]
+	}
+	return member
+}
+
+func WithSub2APIUserID(ctx context.Context, userID int64) context.Context {
+	if ctx == nil || userID <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxkey.Sub2APIUserID, userID)
+}
+
+func Sub2APIUserIDFromContext(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	userID, _ := ctx.Value(ctxkey.Sub2APIUserID).(int64)
+	return userID
+}
+
 func (s *ConcurrencyService) CleanupStaleProcessSlots(ctx context.Context) error {
 	if s == nil || s.cache == nil {
 		return nil
@@ -350,8 +398,9 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 
 	// Generate unique request ID for this slot
 	requestID := generateRequestID()
+	member := EncodeAccountSlotMember(requestID, Sub2APIUserIDFromContext(ctx))
 
-	acquired, err := s.cache.AcquireAccountSlot(ctx, accountID, maxConcurrency, requestID)
+	acquired, err := s.cache.AcquireAccountSlot(ctx, accountID, maxConcurrency, member)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +411,7 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 			ReleaseFunc: func() {
 				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				if err := s.cache.ReleaseAccountSlot(bgCtx, accountID, requestID); err != nil {
+				if err := s.cache.ReleaseAccountSlot(bgCtx, accountID, member); err != nil {
 					logger.LegacyPrintf("service.concurrency", "Warning: failed to release account slot for %d (req=%s): %v", accountID, requestID, err)
 				}
 			},
@@ -768,4 +817,11 @@ func (s *ConcurrencyService) GetAccountConcurrencyBatch(ctx context.Context, acc
 	defer cancel()
 
 	return s.cache.GetAccountConcurrencyBatch(redisCtx, accountIDs)
+}
+
+func (s *ConcurrencyService) GetAccountActiveUserConcurrency(ctx context.Context, accountID int64) (map[int64]int, error) {
+	if s == nil || s.cache == nil {
+		return map[int64]int{}, nil
+	}
+	return s.cache.GetAccountActiveUserConcurrency(ctx, accountID)
 }
