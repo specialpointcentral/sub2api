@@ -400,6 +400,34 @@ var (
 // ErrNoAvailableAccounts 表示没有可用的账号
 var ErrNoAvailableAccounts = errors.New("no available accounts")
 
+type UnsupportedRequestedModelError struct{ Model string }
+
+func (e *UnsupportedRequestedModelError) Error() string {
+	model := strings.TrimSpace(e.Model)
+	if model == "" {
+		return "requested model is not supported by this endpoint/account pool"
+	}
+	return fmt.Sprintf("requested model %q is not supported by this endpoint/account pool", model)
+}
+
+type ModelAccessDeniedError struct {
+	Model  string
+	Reason string
+}
+
+func (e *ModelAccessDeniedError) Error() string {
+	model := strings.TrimSpace(e.Model)
+	reason := strings.TrimSpace(e.Reason)
+	msg := "requested model is not allowed for this endpoint/account"
+	if model != "" {
+		msg = fmt.Sprintf("requested model %q is not allowed for this endpoint/account", model)
+	}
+	if reason != "" {
+		return msg + ": " + reason
+	}
+	return msg
+}
+
 // ErrClaudeCodeOnly 表示分组仅允许 Claude Code 客户端访问
 var ErrClaudeCodeOnly = errors.New("this group only allows Claude Code clients")
 
