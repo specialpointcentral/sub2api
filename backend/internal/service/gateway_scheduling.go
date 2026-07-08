@@ -1956,10 +1956,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 
 	if selected == nil {
 		stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, platform, accounts, excludedIDs, false)
-		if requestedModel != "" {
-			return nil, fmt.Errorf("%w supporting model: %s (%s)", ErrNoAvailableAccounts, requestedModel, summarizeSelectionFailureStats(stats))
-		}
-		return nil, ErrNoAvailableAccounts
+		return nil, classifySelectionFailureError(requestedModel, stats)
 	}
 
 	// 4. 建立粘性绑定
@@ -2217,10 +2214,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 
 	if selected == nil {
 		stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, nativePlatform, accounts, excludedIDs, true)
-		if requestedModel != "" {
-			return nil, fmt.Errorf("%w supporting model: %s (%s)", ErrNoAvailableAccounts, requestedModel, summarizeSelectionFailureStats(stats))
-		}
-		return nil, ErrNoAvailableAccounts
+		return nil, classifySelectionFailureError(requestedModel, stats)
 	}
 
 	// 4. 建立粘性绑定
@@ -2403,6 +2397,30 @@ func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 		stats.ModelUnsupported,
 		stats.ModelRateLimited,
 	)
+}
+
+func unsupportedRequestedModelError(model string) error {
+	return &UnsupportedRequestedModelError{Model: strings.TrimSpace(model)}
+}
+
+func modelAccessDeniedError(model, reason string) error {
+	return &ModelAccessDeniedError{Model: strings.TrimSpace(model), Reason: strings.TrimSpace(reason)}
+}
+
+func classifySelectionFailureError(requestedModel string, stats selectionFailureStats) error {
+	if strings.TrimSpace(requestedModel) == "" {
+		return ErrNoAvailableAccounts
+	}
+	if stats.Total > 0 &&
+		stats.Excluded == 0 &&
+		stats.ModelUnsupported == stats.Total &&
+		stats.Eligible == 0 &&
+		stats.Unschedulable == 0 &&
+		stats.PlatformFiltered == 0 &&
+		stats.ModelRateLimited == 0 {
+		return unsupportedRequestedModelError(requestedModel)
+	}
+	return fmt.Errorf("%w supporting model: %s (%s)", ErrNoAvailableAccounts, requestedModel, summarizeSelectionFailureStats(stats))
 }
 
 // isModelSupportedByAccountWithContext 根据账户平台检查模型支持（带 context）
