@@ -349,6 +349,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	for {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, modelName, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
 		if err != nil {
+			if len(fs.FailedAccountIDs) == 0 && handleGoogleSelectionError(c, err) {
+				return
+			}
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, modelName, modelName, service.PlatformGemini)
 				if !cls.ModelNotFound {
@@ -651,6 +654,20 @@ func googleError(c *gin.Context, status int, message string) {
 			"status":  googleapi.HTTPStatusToGoogleStatus(status),
 		},
 	})
+}
+
+func handleGoogleSelectionError(c *gin.Context, err error) bool {
+	var unsupportedErr *service.UnsupportedRequestedModelError
+	if errors.As(err, &unsupportedErr) {
+		googleError(c, http.StatusBadRequest, unsupportedErr.Error())
+		return true
+	}
+	var deniedErr *service.ModelAccessDeniedError
+	if errors.As(err, &deniedErr) {
+		googleError(c, http.StatusForbidden, deniedErr.Error())
+		return true
+	}
+	return false
 }
 
 func writeUpstreamResponse(c *gin.Context, res *service.UpstreamHTTPResult) {
