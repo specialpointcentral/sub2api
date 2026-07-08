@@ -66,6 +66,10 @@ func (s *helperConcurrencyCacheStub) GetAccountConcurrencyBatch(ctx context.Cont
 	return out, nil
 }
 
+func (s *helperConcurrencyCacheStub) GetAccountActiveUserConcurrency(ctx context.Context, accountID int64) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
+
 func (s *helperConcurrencyCacheStub) IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
 	return true, nil
 }
