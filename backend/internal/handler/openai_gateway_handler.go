@@ -182,6 +182,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
+	c.Request = c.Request.WithContext(service.WithSub2APIUserID(c.Request.Context(), subject.UserID))
 
 	// Read request body
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
@@ -717,6 +718,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
+	c.Request = c.Request.WithContext(service.WithSub2APIUserID(c.Request.Context(), subject.UserID))
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
@@ -1247,6 +1249,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
+	c.Request = c.Request.WithContext(service.WithSub2APIUserID(c.Request.Context(), subject.UserID))
 	reqLog.Info("openai.websocket_ingress_started")
 	clientIP := ip.GetClientIP(c)
 	userAgent := strings.TrimSpace(c.GetHeader("User-Agent"))
