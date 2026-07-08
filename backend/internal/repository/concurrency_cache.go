@@ -627,6 +627,38 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 	return result, nil
 }
 
+func (c *concurrencyCache) GetAccountActiveUserConcurrency(ctx context.Context, accountID int64) (map[int64]int, error) {
+	key := accountSlotKey(accountID)
+
+	now, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis TIME: %w", err)
+	}
+	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
+
+	pipe := c.rdb.Pipeline()
+	pipe.ZRemRangeByScore(ctx, key, "-inf", strconv.FormatInt(cutoffTime, 10))
+	membersCmd := pipe.ZRange(ctx, key, 0, -1)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("pipeline exec: %w", err)
+	}
+
+	members, err := membersCmd.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("zrange: %w", err)
+	}
+
+	result := make(map[int64]int)
+	for _, member := range members {
+		userID := service.ParseAccountSlotMemberUserID(member)
+		if userID <= 0 {
+			continue
+		}
+		result[userID]++
+	}
+	return result, nil
+}
+
 // User slot operations
 
 func (c *concurrencyCache) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {

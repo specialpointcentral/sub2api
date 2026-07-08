@@ -38,6 +38,10 @@ type stubConcurrencyCacheForTest struct {
 	// 记录调用
 	releasedAccountIDs       []int64
 	releasedRequestIDs       []string
+	acquiredAccountIDs       []int64
+	acquiredRequestIDs       []string
+	activeUserConcurrency    map[int64]int
+	activeUserConcurrencyErr error
 	loadBatchCalls           atomic.Int64
 	trackedAPIKeyIDs         []int64
 	trackedAPIKeyRequestIDs  []string
@@ -87,7 +91,9 @@ func (c *ingressLeaseCacheForTest) ReleaseOpenAIWSIngressLease(ctx context.Conte
 var _ ConcurrencyCache = (*stubConcurrencyCacheForTest)(nil)
 var _ OpenAIWSIngressLeaseCache = (*ingressLeaseCacheForTest)(nil)
 
-func (c *stubConcurrencyCacheForTest) AcquireAccountSlot(_ context.Context, _ int64, _ int, _ string) (bool, error) {
+func (c *stubConcurrencyCacheForTest) AcquireAccountSlot(_ context.Context, accountID int64, _ int, requestID string) (bool, error) {
+	c.acquiredAccountIDs = append(c.acquiredAccountIDs, accountID)
+	c.acquiredRequestIDs = append(c.acquiredRequestIDs, requestID)
 	return c.acquireResult, c.acquireErr
 }
 func (c *stubConcurrencyCacheForTest) ReleaseAccountSlot(_ context.Context, accountID int64, requestID string) error {
@@ -107,6 +113,9 @@ func (c *stubConcurrencyCacheForTest) GetAccountConcurrencyBatch(_ context.Conte
 		result[accountID] = c.concurrency
 	}
 	return result, nil
+}
+func (c *stubConcurrencyCacheForTest) GetAccountActiveUserConcurrency(_ context.Context, _ int64) (map[int64]int, error) {
+	return c.activeUserConcurrency, c.activeUserConcurrencyErr
 }
 func (c *stubConcurrencyCacheForTest) IncrementAccountWaitCount(_ context.Context, _ int64, _ int) (bool, error) {
 	return c.waitAllowed, c.waitErr
@@ -248,6 +257,22 @@ func TestAcquireAccountSlot_ReleaseDecrements(t *testing.T) {
 	require.Equal(t, int64(42), cache.releasedAccountIDs[0])
 	require.Len(t, cache.releasedRequestIDs, 1)
 	require.NotEmpty(t, cache.releasedRequestIDs[0], "requestID 不应为空")
+}
+
+func TestAcquireAccountSlot_EncodesSub2APIUserID(t *testing.T) {
+	cache := &stubConcurrencyCacheForTest{acquireResult: true}
+	svc := NewConcurrencyService(cache)
+	ctx := WithSub2APIUserID(context.Background(), 1001)
+
+	result, err := svc.AcquireAccountSlot(ctx, 42, 5)
+	require.NoError(t, err)
+	require.True(t, result.Acquired)
+	require.Len(t, cache.acquiredRequestIDs, 1)
+	require.Equal(t, int64(1001), ParseAccountSlotMemberUserID(cache.acquiredRequestIDs[0]))
+	require.Equal(t, ExtractRequestIDFromMember(cache.acquiredRequestIDs[0]), cache.acquiredRequestIDs[0][:strings.Index(cache.acquiredRequestIDs[0], "|u:")])
+
+	result.ReleaseFunc()
+	require.Equal(t, cache.acquiredRequestIDs, cache.releasedRequestIDs)
 }
 
 func TestAcquireUserSlot_IndependentFromAccount(t *testing.T) {
@@ -598,6 +623,26 @@ func TestGetAccountConcurrencyBatch(t *testing.T) {
 	for _, id := range []int64{1, 2, 3} {
 		require.Equal(t, 3, result[id])
 	}
+}
+
+func TestGetAccountActiveUserConcurrency(t *testing.T) {
+	t.Run("nil cache returns empty map", func(t *testing.T) {
+		svc := &ConcurrencyService{cache: nil}
+
+		result, err := svc.GetAccountActiveUserConcurrency(context.Background(), 42)
+		require.NoError(t, err)
+		require.Empty(t, result)
+	})
+
+	t.Run("delegates to cache", func(t *testing.T) {
+		expected := map[int64]int{1001: 2, 1002: 1}
+		cache := &stubConcurrencyCacheForTest{activeUserConcurrency: expected}
+		svc := NewConcurrencyService(cache)
+
+		result, err := svc.GetAccountActiveUserConcurrency(context.Background(), 42)
+		require.NoError(t, err)
+		require.Equal(t, expected, result)
+	})
 }
 
 func TestIncrementAccountWaitCount_FailOpen(t *testing.T) {
