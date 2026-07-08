@@ -128,6 +128,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
 	}
+	c.Request = c.Request.WithContext(service.WithSub2APIUserID(c.Request.Context(), subject.UserID))
 	reqLog := requestLogger(
 		c,
 		"handler.gateway.messages",
@@ -301,7 +302,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		}
 
 		for {
-			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
+			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", subject.UserID) // Gemini 不使用会话限制
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 && h.handleSelectionError(c, err, streamStarted) {
 					return
