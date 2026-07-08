@@ -73,6 +73,9 @@ func (c StubConcurrencyCache) GetAccountConcurrencyBatch(_ context.Context, acco
 	}
 	return result, nil
 }
+func (c StubConcurrencyCache) GetAccountActiveUserConcurrency(_ context.Context, _ int64) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
 func (c StubConcurrencyCache) CleanupExpiredAccountSlots(_ context.Context, _ int64) error {
 	return nil
 }
