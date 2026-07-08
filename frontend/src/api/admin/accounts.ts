@@ -231,16 +231,43 @@ export async function applyOAuthCredentials(
   return data
 }
 
+export interface AccountStatsParams {
+  days?: number
+  start_date?: string
+  end_date?: string
+  timezone?: string
+}
+
 /**
  * Get account usage statistics
  * @param id - Account ID
- * @param days - Number of days (default: 30)
+ * @param params - Date range parameters. Defaults to 30 days when omitted.
  * @returns Account usage statistics with history, summary, and models
  */
-export async function getStats(id: number, days: number = 30): Promise<AccountUsageStatsResponse> {
+export async function getStats(id: number, params: number | AccountStatsParams = 30): Promise<AccountUsageStatsResponse> {
+  const queryParams = typeof params === 'number' ? { days: params } : params
   const { data } = await apiClient.get<AccountUsageStatsResponse>(`/admin/accounts/${id}/stats`, {
-    params: { days }
+    params: queryParams
   })
+  return data
+}
+
+export interface RecentAccountUser {
+  user_id: number
+  email: string
+  requests: number
+  current_requests: number
+  account_cost: number
+  user_cost: number
+  last_used_at: string
+}
+
+export async function getRecentUsers(id: number, params?: {
+  start_date?: string
+  end_date?: string
+  timezone?: string
+}): Promise<{ users: RecentAccountUser[] }> {
+  const { data } = await apiClient.get<{ users: RecentAccountUser[] }>(`/admin/accounts/${id}/recent-users`, { params })
   return data
 }
 
@@ -824,6 +851,7 @@ export const accountsAPI = {
   refreshCredentials,
   applyOAuthCredentials,
   getStats,
+  getRecentUsers,
   clearError,
   getUsage,
   getTodayStats,

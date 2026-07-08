@@ -1374,18 +1374,10 @@ func (h *AccountHandler) GetStats(c *gin.Context) {
 		return
 	}
 
-	// Parse days parameter (default 30)
-	days := 30
-	if daysStr := c.Query("days"); daysStr != "" {
-		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 90 {
-			days = d
-		}
+	startTime, endTime, ok := parseAccountStatsTimeRange(c)
+	if !ok {
+		return
 	}
-
-	// Calculate time range
-	now := timezone.Now()
-	endTime := timezone.StartOfDay(now.AddDate(0, 0, 1))
-	startTime := timezone.StartOfDay(now.AddDate(0, 0, -days+1))
 
 	stats, err := h.accountUsageService.GetAccountUsageStats(c.Request.Context(), accountID, startTime, endTime)
 	if err != nil {
@@ -1394,6 +1386,46 @@ func (h *AccountHandler) GetStats(c *gin.Context) {
 	}
 
 	response.Success(c, stats)
+}
+
+func parseAccountStatsTimeRange(c *gin.Context) (time.Time, time.Time, bool) {
+	startDateStr := strings.TrimSpace(c.Query("start_date"))
+	endDateStr := strings.TrimSpace(c.Query("end_date"))
+	if startDateStr != "" || endDateStr != "" {
+		if startDateStr == "" || endDateStr == "" {
+			response.BadRequest(c, "start_date and end_date are required together")
+			return time.Time{}, time.Time{}, false
+		}
+
+		userTZ := c.Query("timezone")
+		startTime, parseErr := timezone.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
+		if parseErr != nil {
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD")
+			return time.Time{}, time.Time{}, false
+		}
+		endTime, parseErr := timezone.ParseInUserLocation("2006-01-02", endDateStr, userTZ)
+		if parseErr != nil {
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
+			return time.Time{}, time.Time{}, false
+		}
+		if endTime.Before(startTime) {
+			response.BadRequest(c, "end_date must be greater than or equal to start_date")
+			return time.Time{}, time.Time{}, false
+		}
+		return startTime, endTime.AddDate(0, 0, 1), true
+	}
+
+	days := 30
+	if daysStr := c.Query("days"); daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 90 {
+			days = d
+		}
+	}
+
+	now := timezone.Now()
+	endTime := timezone.StartOfDay(now.AddDate(0, 0, 1))
+	startTime := timezone.StartOfDay(now.AddDate(0, 0, -days+1))
+	return startTime, endTime, true
 }
 
 // GetRecentUsers handles getting recent/current users of an account.
