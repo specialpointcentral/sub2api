@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -219,4 +220,70 @@ func buildRequestTypeFilterConditionWithAlias(startArgIndex int, requestType int
 	default:
 		return fmt.Sprintf("%srequest_type = $%d", prefix, startArgIndex), []any{requestTypeArg}
 	}
+}
+
+func (r *usageLogRepository) GetRecentAccountUsers(ctx context.Context, accountID int64, minutes int) ([]service.RecentAccountUser, error) {
+	query := `
+		SELECT
+			ul.user_id,
+			COALESCE(u.email, '') AS email,
+			COUNT(*) AS requests,
+			COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) AS account_cost,
+			COALESCE(SUM(ul.actual_cost), 0) AS user_cost,
+			MAX(ul.created_at) AS last_used_at
+		FROM usage_logs ul
+		LEFT JOIN users u ON u.id = ul.user_id
+		WHERE ul.account_id = $1 AND ul.created_at >= NOW() - ($2 * INTERVAL '1 minute')
+		GROUP BY ul.user_id, u.email
+		ORDER BY last_used_at DESC
+		LIMIT 50
+	`
+	rows, err := r.sql.QueryContext(ctx, query, accountID, minutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	result := make([]service.RecentAccountUser, 0)
+	for rows.Next() {
+		var user service.RecentAccountUser
+		if err := rows.Scan(&user.UserID, &user.Email, &user.Requests, &user.AccountCost, &user.UserCost, &user.LastUsedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, user)
+	}
+	return result, rows.Err()
+}
+
+func (r *usageLogRepository) GetAccountUsersByTimeRange(ctx context.Context, accountID int64, startTime, endTime time.Time) ([]service.RecentAccountUser, error) {
+	query := `
+		SELECT
+			ul.user_id,
+			COALESCE(u.email, '') AS email,
+			COUNT(*) AS requests,
+			COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) AS account_cost,
+			COALESCE(SUM(ul.actual_cost), 0) AS user_cost,
+			MAX(ul.created_at) AS last_used_at
+		FROM usage_logs ul
+		LEFT JOIN users u ON u.id = ul.user_id
+		WHERE ul.account_id = $1 AND ul.created_at >= $2 AND ul.created_at < $3
+		GROUP BY ul.user_id, u.email
+		ORDER BY requests DESC, last_used_at DESC
+		LIMIT 200
+	`
+	rows, err := r.sql.QueryContext(ctx, query, accountID, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	result := make([]service.RecentAccountUser, 0)
+	for rows.Next() {
+		var user service.RecentAccountUser
+		if err := rows.Scan(&user.UserID, &user.Email, &user.Requests, &user.AccountCost, &user.UserCost, &user.LastUsedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, user)
+	}
+	return result, rows.Err()
 }

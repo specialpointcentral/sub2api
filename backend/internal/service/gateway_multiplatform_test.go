@@ -2001,6 +2001,7 @@ func (m *mockConcurrencyService) GetAccountWaitingCount(ctx context.Context, acc
 type mockConcurrencyCache struct {
 	acquireAccountCalls int
 	loadBatchCalls      int
+	accountRequestIDs   []string
 	acquireResults      map[int64]bool
 	loadBatchErr        error
 	loadMap             map[int64]*AccountLoadInfo
@@ -2010,6 +2011,7 @@ type mockConcurrencyCache struct {
 
 func (m *mockConcurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
 	m.acquireAccountCalls++
+	m.accountRequestIDs = append(m.accountRequestIDs, requestID)
 	if m.acquireResults != nil {
 		if result, ok := m.acquireResults[accountID]; ok {
 			return result, nil
@@ -2032,6 +2034,10 @@ func (m *mockConcurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, a
 		result[accountID] = 0
 	}
 	return result, nil
+}
+
+func (m *mockConcurrencyCache) GetAccountActiveUserConcurrency(ctx context.Context, accountID int64) (map[int64]int, error) {
+	return map[int64]int{}, nil
 }
 
 func (m *mockConcurrencyCache) IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
@@ -2130,6 +2136,50 @@ func (m *mockConcurrencyCache) GetUsersLoadBatch(ctx context.Context, users []Us
 // TestGatewayService_SelectAccountWithLoadAwareness tests load-aware account selection
 func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 	ctx := context.Background()
+
+	t.Run("传入系统用户ID时编码到账号并发槽位", func(t *testing.T) {
+		groupID := int64(171)
+		sub2apiUserID := int64(4001)
+		repo := &mockAccountRepoForPlatform{
+			accounts: []Account{
+				{
+					ID:            71,
+					Platform:      PlatformAnthropic,
+					Priority:      1,
+					Status:        StatusActive,
+					Schedulable:   true,
+					Concurrency:   5,
+					AccountGroups: []AccountGroup{{GroupID: groupID}},
+				},
+			},
+			accountsByID: map[int64]*Account{},
+		}
+		for i := range repo.accounts {
+			repo.accountsByID[repo.accounts[i].ID] = &repo.accounts[i]
+		}
+
+		cache := &mockConcurrencyCache{}
+		cfg := testConfig()
+		cfg.Gateway.Scheduling.LoadBatchEnabled = true
+
+		svc := &GatewayService{
+			accountRepo:        repo,
+			groupRepo:          &mockGroupRepoForGateway{groups: map[int64]*Group{groupID: {ID: groupID, Platform: PlatformAnthropic, Status: StatusActive}}},
+			cfg:                cfg,
+			concurrencyService: NewConcurrencyService(cache),
+		}
+
+		result, err := svc.SelectAccountWithLoadAwareness(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil, "", sub2apiUserID)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.True(t, result.Acquired)
+		require.Len(t, cache.accountRequestIDs, 1)
+		require.Equal(t, sub2apiUserID, ParseAccountSlotMemberUserID(cache.accountRequestIDs[0]))
+
+		if result.ReleaseFunc != nil {
+			result.ReleaseFunc()
+		}
+	})
 
 	t.Run("禁用负载批量查询-降级到传统选择", func(t *testing.T) {
 		repo := &mockAccountRepoForPlatform{
