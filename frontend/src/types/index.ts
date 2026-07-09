@@ -1146,6 +1146,10 @@ export interface OpenAICompactState {
   openai_compact_checked_at?: string
   openai_compact_last_status?: number
   openai_compact_last_error?: string
+  openai_responses_compaction_supported?: boolean
+  openai_responses_compaction_checked_at?: string
+  openai_responses_compaction_last_status?: number
+  openai_responses_compaction_last_error?: string
 }
 
 export interface OpenAIResponsesState {
