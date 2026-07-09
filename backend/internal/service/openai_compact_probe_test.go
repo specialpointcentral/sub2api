@@ -16,6 +16,8 @@ func TestNormalizeAccountTestMode(t *testing.T) {
 		{input: "default", want: AccountTestModeDefault},
 		{input: " compact ", want: AccountTestModeCompact},
 		{input: "COMPACT", want: AccountTestModeCompact},
+		{input: " responses_compact ", want: AccountTestModeResponsesCompact},
+		{input: "RESPONSES_COMPACT", want: AccountTestModeResponsesCompact},
 		{input: "unknown", want: AccountTestModeDefault},
 	}
 
@@ -23,6 +25,32 @@ func TestNormalizeAccountTestMode(t *testing.T) {
 		if got := normalizeAccountTestMode(tt.input); got != tt.want {
 			t.Fatalf("normalizeAccountTestMode(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestCreateOpenAIResponsesCompactProbePayload_UsesBodySignalAndStreaming(t *testing.T) {
+	payload := createOpenAIResponsesCompactProbePayload("gpt-5.4")
+
+	if got := payload["model"]; got != "gpt-5.4" {
+		t.Fatalf("model = %v, want gpt-5.4", got)
+	}
+	if got := payload["stream"]; got != true {
+		t.Fatalf("stream = %v, want true", got)
+	}
+	if got := payload["store"]; got != false {
+		t.Fatalf("store = %v, want false", got)
+	}
+
+	input, ok := payload["input"].([]any)
+	if !ok || len(input) != 2 {
+		t.Fatalf("input = %#v, want two items", payload["input"])
+	}
+	trigger, ok := input[1].(map[string]any)
+	if !ok {
+		t.Fatalf("input[1] = %#v, want object", input[1])
+	}
+	if got := trigger["type"]; got != "compaction_trigger" {
+		t.Fatalf("input[1].type = %v, want compaction_trigger", got)
 	}
 }
 
@@ -41,6 +69,52 @@ func TestBuildOpenAICompactProbeExtraUpdates_SuccessMarksSupported(t *testing.T)
 	}
 	if got := updates["openai_compact_checked_at"]; got != now.Format(time.RFC3339) {
 		t.Fatalf("openai_compact_checked_at = %v, want %s", got, now.Format(time.RFC3339))
+	}
+}
+
+func TestBuildOpenAIResponsesCompactProbeExtraUpdates_SuccessMarksResponsesSupported(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
+	updates := buildOpenAIResponsesCompactProbeExtraUpdates(&http.Response{StatusCode: http.StatusOK}, []byte(`data: {"type":"response.completed"}`), nil, now)
+
+	if got := updates["openai_responses_compaction_supported"]; got != true {
+		t.Fatalf("openai_responses_compaction_supported = %v, want true", got)
+	}
+	if got := updates["openai_responses_compaction_checked_at"]; got != now.Format(time.RFC3339) {
+		t.Fatalf("openai_responses_compaction_checked_at = %v, want %s", got, now.Format(time.RFC3339))
+	}
+	if got := updates["openai_responses_compaction_last_status"]; got != http.StatusOK {
+		t.Fatalf("openai_responses_compaction_last_status = %v, want %d", got, http.StatusOK)
+	}
+	if got := updates["openai_responses_compaction_last_error"]; got != "" {
+		t.Fatalf("openai_responses_compaction_last_error = %v, want empty string", got)
+	}
+}
+
+func TestBuildOpenAIResponsesCompactProbeExtraUpdates_200WithoutTerminalEventDoesNotMarkSupported(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
+	updates := buildOpenAIResponsesCompactProbeExtraUpdates(&http.Response{StatusCode: http.StatusOK}, []byte(`plain text without responses terminal event`), nil, now)
+
+	if _, exists := updates["openai_responses_compaction_supported"]; exists {
+		t.Fatalf("did not expect openai_responses_compaction_supported for non-terminal 200 response")
+	}
+	if got := updates["openai_responses_compaction_last_status"]; got != http.StatusOK {
+		t.Fatalf("openai_responses_compaction_last_status = %v, want %d", got, http.StatusOK)
+	}
+	if got := updates["openai_responses_compaction_last_error"]; got != "responses compact probe did not receive response.completed" {
+		t.Fatalf("openai_responses_compaction_last_error = %v, want missing terminal event error", got)
+	}
+}
+
+func TestBuildOpenAIResponsesCompactProbeExtraUpdates_400UnknownTriggerMarksUnsupported(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
+	body := []byte(`{"error":{"message":"Unknown input item type: compaction_trigger"}}`)
+	updates := buildOpenAIResponsesCompactProbeExtraUpdates(&http.Response{StatusCode: http.StatusBadRequest}, body, nil, now)
+
+	if got := updates["openai_responses_compaction_supported"]; got != false {
+		t.Fatalf("openai_responses_compaction_supported = %v, want false", got)
+	}
+	if got := updates["openai_responses_compaction_last_status"]; got != http.StatusBadRequest {
+		t.Fatalf("openai_responses_compaction_last_status = %v, want %d", got, http.StatusBadRequest)
 	}
 }
 
