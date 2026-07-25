@@ -436,14 +436,28 @@
 
         <!-- Account Users -->
         <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <div class="card p-4">
-            <div class="mb-3 flex items-center justify-between gap-3">
+          <div class="card p-4" data-testid="current-users-list">
+            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
                 {{ t('admin.accounts.stats.currentUsers') }}
               </h3>
-              <span class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.stats.currentUsersHint') }}
-              </span>
+              <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <span>{{ t('admin.accounts.stats.currentUsersHint') }}</span>
+                <button
+                  type="button"
+                  class="inline-flex h-5 w-5 flex-none items-center justify-center text-gray-400 transition-colors hover:text-primary-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 disabled:cursor-default disabled:opacity-60 dark:text-gray-500 dark:hover:text-primary-400"
+                  :title="t('common.refresh')"
+                  :aria-label="t('common.refresh')"
+                  :disabled="recentUsersRefreshing"
+                  @click="refreshRecentUsers"
+                >
+                  <Icon
+                    name="refresh"
+                    size="xs"
+                    :class="recentUsersRefreshing ? 'animate-spin motion-reduce:animate-none' : ''"
+                  />
+                </button>
+              </div>
             </div>
             <div v-if="usersLoading" class="flex items-center justify-center py-8">
               <LoadingSpinner />
@@ -454,10 +468,14 @@
             >
               {{ t('admin.accounts.stats.noRecentUsers') }}
             </div>
-            <div v-else class="overflow-x-auto">
-              <table class="w-full min-w-[720px] divide-y divide-gray-200 text-sm dark:divide-dark-700">
+            <template v-else>
+              <div data-testid="current-users-desktop" class="hidden overflow-x-auto sm:block">
+                <table class="w-full min-w-[740px] divide-y divide-gray-200 text-sm dark:divide-dark-700">
                 <thead class="bg-gray-50 dark:bg-dark-800">
                   <tr>
+                    <th class="w-8 px-2 py-2 text-center">
+                      <span class="sr-only">{{ t('admin.accounts.stats.currentRequests') }}</span>
+                    </th>
                     <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
                       {{ t('admin.accounts.stats.user') }}
                     </th>
@@ -480,12 +498,23 @@
                 </thead>
                 <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
                   <tr
-                    v-for="user in recentUsers"
+                    v-for="user in paginatedRecentUsers"
                     :key="`recent-${user.user_id}`"
                     :class="user.current_requests > 0 ? 'bg-green-50 dark:bg-green-900/10' : ''"
                   >
+                    <td class="w-8 px-2 py-2 text-center align-middle">
+                      <span
+                        v-if="user.current_requests > 0"
+                        class="current-user-active-indicator relative inline-flex h-2.5 w-2.5"
+                        aria-hidden="true"
+                      >
+                        <span
+                          class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-70 motion-reduce:animate-none"
+                        ></span>
+                        <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500"></span>
+                      </span>
+                    </td>
                     <td class="whitespace-nowrap px-3 py-2 text-gray-900 dark:text-white">
-                      <span v-if="user.current_requests > 0" class="mr-2 inline-block h-2 w-2 rounded-full bg-green-500"></span>
                       #{{ user.user_id }}
                     </td>
                     <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">{{ user.email || '-' }}</td>
@@ -504,11 +533,68 @@
                   </tr>
                 </tbody>
               </table>
-            </div>
+              </div>
+
+              <div data-testid="current-users-mobile" class="divide-y divide-gray-100 sm:hidden dark:divide-dark-700">
+                <div
+                  v-for="user in paginatedRecentUsers"
+                  :key="`recent-mobile-${user.user_id}`"
+                  class="py-3"
+                  :class="user.current_requests > 0 ? 'bg-green-50/70 dark:bg-green-900/10' : ''"
+                >
+                  <div class="flex items-start gap-2">
+                    <div class="current-user-status flex h-5 w-5 flex-none items-center justify-center pt-1">
+                      <span
+                        v-if="user.current_requests > 0"
+                        class="current-user-active-indicator relative inline-flex h-2.5 w-2.5"
+                        aria-hidden="true"
+                      >
+                        <span
+                          class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-70 motion-reduce:animate-none"
+                        ></span>
+                        <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500"></span>
+                      </span>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <div class="font-medium text-gray-900 dark:text-white">#{{ user.user_id }}</div>
+                      <div class="break-all text-xs text-gray-500 dark:text-gray-400">{{ user.email || '-' }}</div>
+                      <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                        <div>
+                          <dt class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.currentRequests') }}</dt>
+                          <dd class="tabular-nums text-sm text-gray-900 dark:text-white">{{ user.current_requests || 0 }}</dd>
+                        </div>
+                        <div class="text-right">
+                          <dt class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('usage.accountBilled') }}</dt>
+                          <dd class="tabular-nums text-sm text-gray-900 dark:text-white">${{ formatCost(user.account_cost || 0) }}</dd>
+                        </div>
+                        <div>
+                          <dt class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('usage.userBilled') }}</dt>
+                          <dd class="tabular-nums text-sm text-gray-900 dark:text-white">${{ formatCost(user.user_cost || 0) }}</dd>
+                        </div>
+                        <div class="text-right">
+                          <dt class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.lastUsedAt') }}</dt>
+                          <dd class="text-xs text-gray-600 dark:text-gray-300">{{ formatDateTime(user.last_used_at) }}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <Pagination
+              v-if="recentUsers.length > usersPageSize"
+              data-testid="current-users-pagination"
+              class="-mx-4 -mb-4 mt-3"
+              :page="recentUsersPage"
+              :total="recentUsers.length"
+              :page-size="usersPageSize"
+              :show-page-size-selector="false"
+              @update:page="recentUsersPage = $event"
+            />
           </div>
 
-          <div class="card p-4">
-            <div class="mb-3 flex items-center justify-between gap-3">
+          <div class="card p-4" data-testid="range-users-list">
+            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
                 {{ t('admin.accounts.stats.rangeUsers') }}
               </h3>
@@ -525,8 +611,9 @@
             >
               {{ t('admin.accounts.stats.noRangeUsers') }}
             </div>
-            <div v-else class="overflow-x-auto">
-              <table class="w-full min-w-[680px] divide-y divide-gray-200 text-sm dark:divide-dark-700">
+            <template v-else>
+              <div data-testid="range-users-desktop" class="hidden overflow-x-auto sm:block">
+                <table class="w-full min-w-[680px] divide-y divide-gray-200 text-sm dark:divide-dark-700">
                 <thead class="bg-gray-50 dark:bg-dark-800">
                   <tr>
                     <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
@@ -547,7 +634,7 @@
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-                  <tr v-for="user in rangeUsers" :key="`range-${user.user_id}`">
+                  <tr v-for="user in paginatedRangeUsers" :key="`range-${user.user_id}`">
                     <td class="whitespace-nowrap px-3 py-2 text-gray-900 dark:text-white">#{{ user.user_id }}</td>
                     <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">{{ user.email || '-' }}</td>
                     <td class="whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-900 dark:text-white">
@@ -562,7 +649,45 @@
                   </tr>
                 </tbody>
               </table>
-            </div>
+              </div>
+
+              <div data-testid="range-users-mobile" class="divide-y divide-gray-100 sm:hidden dark:divide-dark-700">
+                <div
+                  v-for="user in paginatedRangeUsers"
+                  :key="`range-mobile-${user.user_id}`"
+                  class="py-3"
+                >
+                  <div class="min-w-0">
+                    <div class="font-medium text-gray-900 dark:text-white">#{{ user.user_id }}</div>
+                    <div class="break-all text-xs text-gray-500 dark:text-gray-400">{{ user.email || '-' }}</div>
+                    <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                      <div>
+                        <dt class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.requests') }}</dt>
+                        <dd class="tabular-nums text-sm text-gray-900 dark:text-white">{{ formatNumber(user.requests || 0) }}</dd>
+                      </div>
+                      <div class="text-right">
+                        <dt class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('usage.accountBilled') }}</dt>
+                        <dd class="tabular-nums text-sm text-gray-900 dark:text-white">${{ formatCost(user.account_cost || 0) }}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('usage.userBilled') }}</dt>
+                        <dd class="tabular-nums text-sm text-gray-900 dark:text-white">${{ formatCost(user.user_cost || 0) }}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </template>
+            <Pagination
+              v-if="rangeUsers.length > usersPageSize"
+              data-testid="range-users-pagination"
+              class="-mx-4 -mb-4 mt-3"
+              :page="rangeUsersPage"
+              :total="rangeUsers.length"
+              :page-size="usersPageSize"
+              :show-page-size-selector="false"
+              @update:page="rangeUsersPage = $event"
+            />
           </div>
         </div>
 
@@ -623,6 +748,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
+import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import {
   Chart as ChartJS,
@@ -638,12 +764,14 @@ import {
 import { Line } from 'vue-chartjs'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { adminAPI } from '@/api/admin'
 import type { AccountStatsParams, RecentAccountUser } from '@/api/admin/accounts'
 import type { Account, AccountUsageStatsResponse } from '@/types'
+import { getConfiguredTableDefaultPageSize } from '@/utils/tablePreferences'
 
 ChartJS.register(
   CategoryScale,
@@ -672,6 +800,11 @@ const usersLoading = ref(false)
 const stats = ref<AccountUsageStatsResponse | null>(null)
 const recentUsers = ref<RecentAccountUser[]>([])
 const rangeUsers = ref<RecentAccountUser[]>([])
+const recentUsersRefreshing = ref(false)
+let liveRefreshGeneration = 0
+const usersPageSize = getConfiguredTableDefaultPageSize()
+const recentUsersPage = ref(1)
+const rangeUsersPage = ref(1)
 type StatsRangeKey = 'today' | 'yesterday' | '7d' | '30d' | 'month' | '90d' | 'custom'
 const currentRange = ref<StatsRangeKey>('30d')
 const customStartDate = ref('')
@@ -765,6 +898,30 @@ const canApplyCustomRange = computed(() => Boolean(
   customEndDate.value &&
   customStartDate.value <= customEndDate.value
 ))
+
+const paginateUsers = (users: RecentAccountUser[], page: number): RecentAccountUser[] => {
+  const start = (page - 1) * usersPageSize
+  return users.slice(start, start + usersPageSize)
+}
+
+const paginatedRecentUsers = computed(() => paginateUsers(recentUsers.value, recentUsersPage.value))
+const paginatedRangeUsers = computed(() => paginateUsers(rangeUsers.value, rangeUsersPage.value))
+
+watch(
+  () => recentUsers.value.length,
+  (total) => {
+    const lastPage = Math.max(1, Math.ceil(total / usersPageSize))
+    recentUsersPage.value = Math.min(recentUsersPage.value, lastPage)
+  }
+)
+
+watch(
+  () => rangeUsers.value.length,
+  (total) => {
+    const lastPage = Math.max(1, Math.ceil(total / usersPageSize))
+    rangeUsersPage.value = Math.min(rangeUsersPage.value, lastPage)
+  }
+)
 
 // Line chart data
 const trendChartData = computed(() => {
@@ -902,20 +1059,6 @@ const lineChartOptions = computed(() => ({
   }
 }))
 
-// Load stats when modal opens
-watch(
-  () => props.show,
-  async (newVal) => {
-    if (newVal && props.account) {
-      await loadStats()
-    } else {
-      stats.value = null
-      recentUsers.value = []
-      rangeUsers.value = []
-    }
-  }
-)
-
 const loadStats = async () => {
   if (!props.account) return
   const rangeParams = selectedDateParams.value
@@ -957,7 +1100,62 @@ const loadUserStats = async (accountId: number, rangeParams: AccountStatsParams)
   }
 }
 
+const refreshRecentUsers = async () => {
+  const accountId = props.account?.id
+  if (!props.show || !accountId || document.hidden || recentUsersRefreshing.value) return
+
+  const generation = liveRefreshGeneration
+  recentUsersRefreshing.value = true
+  try {
+    const response = await adminAPI.accounts.getRecentUsers(accountId)
+    if (
+      generation === liveRefreshGeneration &&
+      props.show &&
+      props.account?.id === accountId
+    ) {
+      recentUsers.value = response.users || []
+    }
+  } catch (error) {
+    console.error('Failed to refresh recent account users:', error)
+  } finally {
+    if (generation === liveRefreshGeneration) {
+      recentUsersRefreshing.value = false
+    }
+  }
+}
+
+const { pause: pauseRecentUsersPolling, resume: resumeRecentUsersPolling } = useIntervalFn(
+  refreshRecentUsers,
+  5000,
+  { immediate: false }
+)
+
+// Full statistics load once per dialog/account; only recent users poll afterward.
+watch(
+  () => [props.show, props.account?.id] as const,
+  async ([show, accountId]) => {
+    liveRefreshGeneration += 1
+    pauseRecentUsersPolling()
+    recentUsersRefreshing.value = false
+
+    if (show && accountId) {
+      recentUsersPage.value = 1
+      rangeUsersPage.value = 1
+      await loadStats()
+      if (props.show && props.account?.id === accountId) {
+        resumeRecentUsersPolling()
+      }
+      return
+    }
+
+    stats.value = null
+    recentUsers.value = []
+    rangeUsers.value = []
+  }
+)
+
 const setStatsRange = async (range: StatsRangeKey) => {
+  rangeUsersPage.value = 1
   if (range === 'custom') {
     if (!customStartDate.value || !customEndDate.value) {
       const today = new Date()
@@ -977,6 +1175,7 @@ const setStatsRange = async (range: StatsRangeKey) => {
 
 const applyCustomRange = async () => {
   if (!canApplyCustomRange.value) return
+  rangeUsersPage.value = 1
   await loadStats()
 }
 
