@@ -1,27 +1,16 @@
 <template>
-  <div class="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-    <!-- Background -->
-    <div
-      class="absolute inset-0 bg-gradient-to-br from-gray-50 via-primary-50/30 to-gray-100 dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
-    ></div>
+  <div class="relative flex min-h-screen items-center justify-center overflow-hidden bg-gray-50 p-4 dark:bg-dark-950">
+    <!-- Pixel Grid Background -->
+    <div class="pixel-grid-bg pointer-events-none absolute inset-0"></div>
 
-    <!-- Decorative Elements -->
-    <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <!-- Gradient Orbs -->
-      <div
-        class="absolute -right-40 -top-40 h-80 w-80 rounded-full bg-primary-400/20 blur-3xl"
-      ></div>
-      <div
-        class="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-primary-500/15 blur-3xl"
-      ></div>
-      <div
-        class="absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary-300/10 blur-3xl"
-      ></div>
-
-      <!-- Grid Pattern -->
-      <div
-        class="absolute inset-0 bg-[linear-gradient(rgba(20,184,166,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(20,184,166,0.03)_1px,transparent_1px)] bg-[size:64px_64px]"
-      ></div>
+    <!-- Decorative floating pixels -->
+    <div class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+      <div class="absolute left-[12%] top-[18%] h-3 w-3 bg-primary-400/60"></div>
+      <div class="absolute right-[15%] top-[26%] h-2 w-2 bg-primary-500/50"></div>
+      <div class="absolute bottom-[22%] left-[20%] h-2 w-2 bg-primary-300/60"></div>
+      <div class="absolute bottom-[30%] right-[10%] h-3 w-3 bg-primary-400/40"></div>
+      <div class="absolute left-[45%] top-[10%] h-2 w-2 bg-primary-500/40"></div>
+      <div class="absolute bottom-[12%] right-[38%] h-2 w-2 bg-primary-300/50"></div>
     </div>
 
     <!-- Content Container -->
@@ -30,22 +19,20 @@
       <div class="mb-8 text-center">
         <!-- Custom Logo or Default Logo -->
         <template v-if="settingsLoaded">
-          <div
-            class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl shadow-lg shadow-primary-500/30"
-          >
+          <div class="pixel-frame mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden p-1.5">
             <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
           </div>
-          <h1 class="text-gradient mb-2 text-3xl font-bold">
-            {{ siteName }}
+          <h1 class="mb-2 font-pixel text-2xl font-bold text-gray-900 dark:text-white">
+            {{ siteName }}<span class="pixel-cursor"></span>
           </h1>
-          <p class="text-sm text-gray-500 dark:text-dark-400">
-            {{ siteSubtitle }}
+          <p class="font-pixel text-sm text-gray-500 dark:text-dark-400">
+            <span class="text-primary-500">&gt;</span> {{ siteSubtitle }}
           </p>
         </template>
       </div>
 
       <!-- Card Container -->
-      <div class="card-glass rounded-2xl p-8 shadow-glass">
+      <div class="pixel-card p-6 sm:p-8">
         <slot />
       </div>
 
@@ -55,7 +42,7 @@
       </div>
 
       <!-- Copyright -->
-      <div class="mt-8 text-center text-xs text-gray-400 dark:text-dark-500">
+      <div class="mt-8 text-center font-pixel text-xs text-gray-400 dark:text-dark-500">
         &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
       </div>
     </div>
@@ -80,9 +67,3 @@ onMounted(() => {
   appStore.fetchPublicSettings()
 })
 </script>
-
-<style scoped>
-.text-gradient {
-  @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
-}
-</style>
