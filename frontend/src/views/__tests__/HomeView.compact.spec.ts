@@ -46,6 +46,7 @@ function mountHome(settings: Record<string, unknown> = {}) {
         RouterLink: RouterLinkStub,
         LocaleSwitcher: { template: '<div data-testid="locale-switcher" />' },
         Icon: { template: '<span data-testid="icon" />' },
+        VoxelField: { template: '<canvas data-testid="voxel-field" />' },
       },
     },
   })
@@ -97,7 +98,8 @@ describe('HomeView compact mode', () => {
     const wrapper = mountHome(settings)
 
     expect(wrapper.find('[data-testid="compact-home"]').exists()).toBe(false)
-    expect(wrapper.find('.terminal-container').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="pixel-home"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="voxel-field"]').exists()).toBe(true)
   })
 
   it('links unauthenticated visitors to login', () => {

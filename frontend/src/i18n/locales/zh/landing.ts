@@ -17,11 +17,7 @@ export default {
     // 新增：面向用户的价值主张
     heroSubtitle: '一个密钥，畅用多个 AI 模型',
     heroDescription: '无需管理多个订阅账号，一站式接入 Claude、GPT、Gemini 等主流 AI 服务',
-    tags: {
-      subscriptionToApi: '订阅转 API',
-      stickySession: '会话保持',
-      realtimeBilling: '按量计费'
-    },
+    pixelHint: '移动鼠标，方块会弹跳；小房子会自己一点点盖起来，再悄悄拆掉。',
     // 用户痛点区块
     painPoints: {
       title: '你是否也遇到这些问题？',
@@ -48,14 +44,6 @@ export default {
     solutions: {
       title: '我们帮你解决',
       subtitle: '简单三步，开始省心使用 AI'
-    },
-    features: {
-      unifiedGateway: '一键接入',
-      unifiedGatewayDesc: '获取一个 API 密钥，即可调用所有已接入的 AI 模型，无需分别申请。',
-      multiAccount: '稳定可靠',
-      multiAccountDesc: '智能调度多个上游账号，自动切换和负载均衡，告别频繁报错。',
-      balanceQuota: '用多少付多少',
-      balanceQuotaDesc: '按实际使用量计费，支持设置配额上限，团队用量一目了然。'
     },
     // 优势对比
     comparison: {
@@ -92,16 +80,6 @@ export default {
           us: '可设配额、查明细'
         }
       }
-    },
-    providers: {
-      title: '已支持的 AI 模型',
-      description: '一个 API，多种选择',
-      supported: '已支持',
-      soon: '即将推出',
-      claude: 'Claude',
-      gemini: 'Gemini',
-      antigravity: 'Antigravity',
-      more: '更多'
     },
     // CTA 区块
     cta: {
