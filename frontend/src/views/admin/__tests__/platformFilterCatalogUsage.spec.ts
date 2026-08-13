@@ -19,15 +19,16 @@ describe('admin platform filters', () => {
     expect(source).toContain('...CONCRETE_PLATFORM_OPTIONS')
   })
 
-  it('uses the concrete platform catalog wherever concrete platforms are selected', () => {
+  it('extends the concrete platform catalog with Kiro wherever supported platforms are selected', () => {
     for (const path of [
       'src/components/admin/account/AccountTableFilters.vue',
       'src/components/admin/ErrorPassthroughRulesModal.vue',
       'src/views/admin/ops/components/OpsDashboardHeader.vue'
     ]) {
       const source = readSource(path)
-      expect(source).toContain("import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'")
+      expect(source).toMatch(/import \{[^}]*CONCRETE_PLATFORM_OPTIONS[^}]*KIRO_PLATFORM_OPTION[^}]*\} from '@\/constants\/platforms'/)
       expect(source).toMatch(/platformOptions\s*=.*CONCRETE_PLATFORM_OPTIONS|pOpts.*\.\.\.CONCRETE_PLATFORM_OPTIONS/s)
+      expect(source).toContain('KIRO_PLATFORM_OPTION')
     }
   })
 })
