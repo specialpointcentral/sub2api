@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAllPlatformsIncludesEveryConcretePlatform(t *testing.T) {
+func TestAllPlatformsIncludesEverySupportedPlatform(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"anthropic",
 		"openai",
@@ -16,5 +16,6 @@ func TestAllPlatformsIncludesEveryConcretePlatform(t *testing.T) {
 		"kimi",
 		"zhipu",
 		"deepseek",
+		"kiro",
 	}, AllPlatforms())
 }
