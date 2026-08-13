@@ -1615,7 +1615,9 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
 
   try {
 		const fetchFn = () => options?.source
-			? adminAPI.accounts.getUsage(props.account.id, options.source, options.bypassCache === true)
+			? options.bypassCache
+				? adminAPI.accounts.getUsage(props.account.id, options.source, true)
+				: adminAPI.accounts.getUsage(props.account.id, options.source)
 			: adminAPI.accounts.getUsage(props.account.id)
     const result = await enqueueUsageRequest(props.account, fetchFn)
     if (!unmounted.value) {

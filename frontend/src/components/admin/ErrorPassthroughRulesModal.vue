@@ -433,7 +433,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
+import { CONCRETE_PLATFORM_OPTIONS, KIRO_PLATFORM_OPTION } from '@/constants/platforms'
 import { adminAPI } from '@/api/admin'
 import type { ErrorPassthroughRule } from '@/api/admin/errorPassthrough'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -486,7 +486,7 @@ const matchModeOptions = computed(() => [
   { value: 'all', label: t('admin.errorPassthrough.matchMode.all'), description: t('admin.errorPassthrough.matchMode.allHint') }
 ])
 
-const platformOptions = CONCRETE_PLATFORM_OPTIONS
+const platformOptions = [...CONCRETE_PLATFORM_OPTIONS, KIRO_PLATFORM_OPTION]
 
 // Load rules when dialog opens
 watch(() => props.show, (newVal) => {

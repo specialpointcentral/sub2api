@@ -18,12 +18,15 @@ export const CONCRETE_PLATFORM_OPTIONS = [
   { value: 'grok', label: 'Grok' },
   { value: 'kimi', label: 'Kimi' },
   { value: 'zhipu', label: 'Zhipu GLM' },
-  { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'kiro', label: 'Kiro' }
+  { value: 'deepseek', label: 'DeepSeek' }
 ] as const satisfies readonly PlatformOption<AccountPlatform>[]
+
+/** Kiro accounts use Anthropic as their account platform, but Kiro can own groups. */
+export const KIRO_PLATFORM_OPTION = { value: 'kiro', label: 'Kiro' } as const satisfies PlatformOption<GroupPlatform>
 
 /** Platforms that can own a group. */
 export const GROUP_PLATFORM_OPTIONS = [
   ...CONCRETE_PLATFORM_OPTIONS,
-  { value: 'composite', label: 'Composite' }
+  { value: 'composite', label: 'Composite' },
+  KIRO_PLATFORM_OPTION
 ] as const satisfies readonly PlatformOption<GroupPlatform>[]
