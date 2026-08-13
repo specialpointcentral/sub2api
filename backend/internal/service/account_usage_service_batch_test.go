@@ -10,8 +10,12 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
 
-// Minimal UsageLogRepository stub for batch usage tests (HEAD lacks geminiUsageLogRepoStub).
-type usageBatchLogRepoStub struct{}
+// Minimal UsageLogRepository stub for batch usage tests. Embed the interface so
+// unrelated repository additions do not force this focused stub to grow; the
+// methods exercised by these tests are overridden below.
+type usageBatchLogRepoStub struct {
+	UsageLogRepository
+}
 
 var _ UsageLogRepository = (*usageBatchLogRepoStub)(nil)
 
@@ -48,6 +52,9 @@ func (r *usageBatchLogRepoStub) GetAccountWindowStats(context.Context, int64, ti
 }
 func (r *usageBatchLogRepoStub) GetAccountTodayStats(context.Context, int64) (*usagestats.AccountStats, error) {
 	return &usagestats.AccountStats{}, nil
+}
+func (r *usageBatchLogRepoStub) GetAccountUsersByTimeRange(context.Context, int64, time.Time, time.Time) ([]RecentAccountUser, error) {
+	return nil, nil
 }
 func (r *usageBatchLogRepoStub) GetDashboardStats(context.Context) (*usagestats.DashboardStats, error) {
 	return nil, nil
