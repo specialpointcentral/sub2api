@@ -612,17 +612,17 @@ type PublicSettingsInjectionPayload struct {
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	// ChannelMonitorHideThroughput is public so the user UI can hide RPM/TPM
 	// without waiting for API redaction alone (defense in depth).
-	ChannelMonitorHideThroughput bool `json:"channel_monitor_hide_throughput"`
-	AvailableChannelsEnabled     bool `json:"available_channels_enabled"`
-	ModelPlazaEnabled            bool `json:"model_plaza_enabled"`
-	ModelPlazaRequireAuth        bool `json:"model_plaza_require_auth"`
-	AffiliateEnabled             bool `json:"affiliate_enabled"`
-	RiskControlEnabled           bool `json:"risk_control_enabled"`
-	AllowUserViewErrorRequests   bool `json:"allow_user_view_error_requests"`
-	BillingStatementEmailEnabled         bool `json:"billing_statement_email_enabled"`
-	BillingStatementDailyEnabled         bool `json:"billing_statement_daily_enabled"`
-	BillingStatementWeeklyEnabled        bool `json:"billing_statement_weekly_enabled"`
-	BillingStatementMonthlyEnabled       bool `json:"billing_statement_monthly_enabled"`
+	ChannelMonitorHideThroughput   bool `json:"channel_monitor_hide_throughput"`
+	AvailableChannelsEnabled       bool `json:"available_channels_enabled"`
+	ModelPlazaEnabled              bool `json:"model_plaza_enabled"`
+	ModelPlazaRequireAuth          bool `json:"model_plaza_require_auth"`
+	AffiliateEnabled               bool `json:"affiliate_enabled"`
+	RiskControlEnabled             bool `json:"risk_control_enabled"`
+	AllowUserViewErrorRequests     bool `json:"allow_user_view_error_requests"`
+	BillingStatementEmailEnabled   bool `json:"billing_statement_email_enabled"`
+	BillingStatementDailyEnabled   bool `json:"billing_statement_daily_enabled"`
+	BillingStatementWeeklyEnabled  bool `json:"billing_statement_weekly_enabled"`
+	BillingStatementMonthlyEnabled bool `json:"billing_statement_monthly_enabled"`
 }
 
 // GetPublicSettingsForInjection returns public settings in a format suitable for HTML injection.
