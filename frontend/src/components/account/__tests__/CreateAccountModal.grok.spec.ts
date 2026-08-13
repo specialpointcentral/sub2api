@@ -12,7 +12,7 @@ describe('CreateAccountModal Grok account types', () => {
     expect(source).toContain('data-testid="grok-account-type-api-key"')
     expect(source).toContain("@click=\"accountCategory = 'apikey'\"")
     expect(source).toContain("newPlatform === 'grok'")
-    expect(source).toContain("? 'https://api.x.ai/v1'")
+    expect(source).toContain("return 'https://api.x.ai/v1'")
     expect(source).toContain("form.platform === 'grok'")
     expect(source).toContain(':placeholder="apiKeyValuePlaceholder"')
     expect(source).toContain("return 'xai-...'")
