@@ -19,7 +19,14 @@ const (
 	openAIStopSchedulingBridgeCooldown    = 2 * time.Minute
 	openAIOAuth429StormWindow             = 10 * time.Second
 	openAIOAuth429StormMaxAccountSwitches = 1
+	openAIAccountRuntimeBlockReadCacheTTL = 250 * time.Millisecond
+	openAIAccountRuntimeBlockReadBackoff  = time.Second
 )
+
+type openAIAccountRuntimeBlockReadCacheEntry struct {
+	sharedUntil time.Time
+	refreshAt   time.Time
+}
 
 // OpenAIOAuth429FailoverState tracks the request-local follow-up budget after
 // the first Grok OAuth 429. Once that 429 occurs, exactly one different account
@@ -261,6 +268,28 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 	mu.Lock()
 	defer mu.Unlock()
 	_, _ = s.blockAccountSchedulingLocked(account, until, reason)
+	if s.openAIAccountRuntimeCache == nil {
+		return
+	}
+	value, ok := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	localUntil, valid := value.(time.Time)
+	if !ok || !valid || localUntil.IsZero() {
+		return
+	}
+	cacheCtx, cancel := openAIAccountRuntimeCacheContext()
+	sharedUntil, err := s.openAIAccountRuntimeCache.SetOpenAIAccountRuntimeBlock(cacheCtx, account.ID, localUntil)
+	cancel()
+	if err != nil {
+		slog.Debug("openai_runtime_block_cache_set_failed", "account_id", account.ID, "error", err)
+		return
+	}
+	if sharedUntil.After(localUntil) {
+		_, _ = s.blockAccountSchedulingLocked(account, sharedUntil, reason)
+	}
+	s.openaiAccountRuntimeBlockReadCache.Store(account.ID, openAIAccountRuntimeBlockReadCacheEntry{
+		sharedUntil: sharedUntil,
+		refreshAt:   time.Now().Add(openAIAccountRuntimeBlockReadCacheTTL),
+	})
 }
 
 func (s *OpenAIGatewayService) openAIAccountRuntimeBlockLock(accountID int64) *sync.Mutex {
@@ -318,12 +347,74 @@ func (s *OpenAIGatewayService) ClearAccountSchedulingBlock(accountID int64) {
 	s.openaiAccountRuntimeBlockUntil.Delete(accountID)
 	s.openaiOAuth429RetryStartedAt.Delete(accountID)
 	s.openaiAccountRuntimeBlockGeneration.Store(accountID, s.openaiAccountRuntimeBlockSequence.Add(1))
+	s.openaiAccountRuntimeBlockReadCache.Delete(accountID)
+	if s.openAIAccountRuntimeCache != nil {
+		cacheCtx, cancel := openAIAccountRuntimeCacheContext()
+		err := s.openAIAccountRuntimeCache.ClearOpenAIAccountRuntimeBlock(cacheCtx, accountID)
+		cancel()
+		if err != nil {
+			s.openaiAccountRuntimeBlockReadCache.Store(accountID, openAIAccountRuntimeBlockReadCacheEntry{
+				refreshAt: time.Now().Add(openAIAccountRuntimeBlockReadBackoff),
+			})
+			slog.Debug("openai_runtime_block_cache_clear_failed", "account_id", accountID, "error", err)
+			return
+		}
+		s.openaiAccountRuntimeBlockReadCache.Store(accountID, openAIAccountRuntimeBlockReadCacheEntry{
+			refreshAt: time.Now().Add(openAIAccountRuntimeBlockReadCacheTTL),
+		})
+	}
 }
 
 func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) bool {
 	if s == nil || !isOpenAIAccount(account) {
 		return false
 	}
+	if s.openAIAccountRuntimeCache != nil {
+		now := time.Now()
+		if cached, ok := s.openaiAccountRuntimeBlockReadCache.Load(account.ID); ok {
+			entry, valid := cached.(openAIAccountRuntimeBlockReadCacheEntry)
+			if valid && now.Before(entry.refreshAt) {
+				return s.reconcileOpenAIAccountRuntimeBlockRead(account, entry.sharedUntil, now)
+			}
+		}
+		cacheCtx, cancel := openAIAccountRuntimeCacheContext()
+		sharedUntil, err := s.openAIAccountRuntimeCache.GetOpenAIAccountRuntimeBlock(cacheCtx, account.ID)
+		cancel()
+		now = time.Now()
+		if err == nil {
+			s.openaiAccountRuntimeBlockReadCache.Store(account.ID, openAIAccountRuntimeBlockReadCacheEntry{
+				sharedUntil: sharedUntil,
+				refreshAt:   now.Add(openAIAccountRuntimeBlockReadCacheTTL),
+			})
+			return s.reconcileOpenAIAccountRuntimeBlockRead(account, sharedUntil, now)
+		}
+		s.openaiAccountRuntimeBlockReadCache.Store(account.ID, openAIAccountRuntimeBlockReadCacheEntry{
+			refreshAt: now.Add(openAIAccountRuntimeBlockReadBackoff),
+		})
+		slog.Debug("openai_runtime_block_cache_get_failed", "account_id", account.ID, "error", err)
+	}
+	return s.isOpenAIAccountLocallyRuntimeBlocked(account)
+}
+
+// reconcileOpenAIAccountRuntimeBlockRead merges a shared deadline into the
+// process-local blocker without treating a missing Redis key as an explicit
+// clear. A local block may have been written immediately before another
+// replica's stale/empty read and remains authoritative until its deadline.
+func (s *OpenAIGatewayService) reconcileOpenAIAccountRuntimeBlockRead(account *Account, sharedUntil, now time.Time) bool {
+	if sharedUntil.After(now) {
+		mu := s.openAIAccountRuntimeBlockLock(account.ID)
+		mu.Lock()
+		current, ok := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
+		currentUntil, valid := current.(time.Time)
+		if !ok || !valid || sharedUntil.After(currentUntil) {
+			s.openaiAccountRuntimeBlockUntil.Store(account.ID, sharedUntil)
+		}
+		mu.Unlock()
+	}
+	return s.isOpenAIAccountLocallyRuntimeBlocked(account)
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountLocallyRuntimeBlocked(account *Account) bool {
 	mu := s.openAIAccountRuntimeBlockLock(account.ID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -414,7 +505,19 @@ func (s *OpenAIGatewayService) recordOpenAIOAuth429() {
 	if s == nil {
 		return
 	}
-	now := time.Now()
+	s.recordLocalOpenAIOAuth429(time.Now())
+	if s.openAIAccountRuntimeCache == nil {
+		return
+	}
+	cacheCtx, cancel := openAIAccountRuntimeCacheContext()
+	_, err := s.openAIAccountRuntimeCache.IncrementOpenAIOAuth429Storm(cacheCtx, openAIOAuth429StormWindow)
+	cancel()
+	if err != nil {
+		slog.Debug("openai_oauth_429_storm_cache_increment_failed", "error", err)
+	}
+}
+
+func (s *OpenAIGatewayService) recordLocalOpenAIOAuth429(now time.Time) {
 	windowStart := s.openaiOAuth429WindowStartUnixNano.Load()
 	if windowStart == 0 || now.Sub(time.Unix(0, windowStart)) >= openAIOAuth429StormWindow {
 		if s.openaiOAuth429WindowStartUnixNano.CompareAndSwap(windowStart, now.UnixNano()) {

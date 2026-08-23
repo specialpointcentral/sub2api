@@ -5832,6 +5832,61 @@
                 </p>
               </div>
 
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.openAIRequestPacing") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.openAIRequestPacingHint") }}
+                  </p>
+                </div>
+                <Toggle v-model="form.openai_request_pacing_enabled" data-testid="openai-request-pacing-enabled" />
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.openAIRequestPacingMinInterval") }}
+                  </label>
+                  <input v-model.number="form.openai_request_pacing_min_interval_ms" data-testid="openai-request-pacing-min-interval-ms" type="number" min="0" max="60000" class="input w-full" />
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.openAIRequestPacingMaxInterval") }}
+                  </label>
+                  <input v-model.number="form.openai_request_pacing_max_interval_ms" data-testid="openai-request-pacing-max-interval-ms" type="number" min="0" max="60000" class="input w-full" />
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.gatewayForwarding.openAIAccountThreadConcurrencyLimit") }}
+                </label>
+                <input v-model.number="form.openai_account_thread_concurrency_limit" data-testid="openai-account-thread-concurrency-limit" type="number" min="0" max="10000" class="input w-full" />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.openAIAccountThreadConcurrencyLimitHint") }}
+                </p>
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.openAIQuotaProbeInterval") }}
+                  </label>
+                  <input v-model.number="form.openai_quota_probe_interval_minutes" data-testid="openai-quota-probe-interval-minutes" type="number" min="1" max="1440" class="input w-full" />
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.openAIQuotaProbeJitterRatio") }}
+                  </label>
+                  <input v-model.number="form.openai_quota_probe_jitter_ratio" data-testid="openai-quota-probe-jitter-ratio" type="number" min="0" max="0.5" step="0.01" class="input w-full" />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.openAIQuotaProbeJitterRatioHint") }}
+                  </p>
+                </div>
+              </div>
+
             </div>
           </div>
 
@@ -9893,6 +9948,12 @@ const form = reactive<SettingsForm>({
   openai_codex_device_pool_platform_ratio: "1:1:2",
   openai_codex_ua_persona_enabled: false,
   openai_codex_version_stagger_max_hours: 0,
+  openai_request_pacing_enabled: false,
+  openai_request_pacing_min_interval_ms: 250,
+  openai_request_pacing_max_interval_ms: 750,
+  openai_account_thread_concurrency_limit: 0,
+  openai_quota_probe_interval_minutes: 10,
+  openai_quota_probe_jitter_ratio: 0.25,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -11177,6 +11238,24 @@ async function saveSettings() {
     form.openai_codex_device_pool_platform_ratio =
       codexDevicePoolPlatformRatio.join(":");
 
+    const pacingMin = Number(form.openai_request_pacing_min_interval_ms);
+    const pacingMax = Number(form.openai_request_pacing_max_interval_ms);
+    const threadLimit = Number(form.openai_account_thread_concurrency_limit);
+    const quotaInterval = Number(form.openai_quota_probe_interval_minutes);
+    const quotaJitter = Number(form.openai_quota_probe_jitter_ratio);
+    if (!Number.isInteger(pacingMin) || !Number.isInteger(pacingMax) || pacingMin < 0 || pacingMax > 60000 || pacingMin > pacingMax) {
+      appStore.showError(t("admin.settings.gatewayForwarding.openAIRequestPacingRangeError"));
+      return;
+    }
+    if (!Number.isInteger(threadLimit) || threadLimit < 0 || threadLimit > 10000) {
+      appStore.showError(t("admin.settings.gatewayForwarding.openAIAccountThreadConcurrencyLimitError"));
+      return;
+    }
+    if (!Number.isInteger(quotaInterval) || quotaInterval < 1 || quotaInterval > 1440 || !Number.isFinite(quotaJitter) || quotaJitter < 0 || quotaJitter > 0.5) {
+      appStore.showError(t("admin.settings.gatewayForwarding.openAIQuotaProbeRangeError"));
+      return;
+    }
+
     const normalizedTableDefaultPageSize = Math.floor(
       Number(form.table_default_page_size),
     );
@@ -11535,6 +11614,12 @@ async function saveSettings() {
       openai_codex_version_stagger_max_hours: Number(
         form.openai_codex_version_stagger_max_hours,
       ),
+      openai_request_pacing_enabled: form.openai_request_pacing_enabled,
+      openai_request_pacing_min_interval_ms: Number(form.openai_request_pacing_min_interval_ms),
+      openai_request_pacing_max_interval_ms: Number(form.openai_request_pacing_max_interval_ms),
+      openai_account_thread_concurrency_limit: Number(form.openai_account_thread_concurrency_limit),
+      openai_quota_probe_interval_minutes: Number(form.openai_quota_probe_interval_minutes),
+      openai_quota_probe_jitter_ratio: Number(form.openai_quota_probe_jitter_ratio),
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:
