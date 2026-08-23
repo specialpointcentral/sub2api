@@ -2650,6 +2650,179 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	return nil
 }
 
+// EnsureCodexFingerprintSeed atomically preserves a valid account seed or creates
+// one for an OpenAI OAuth account. Concurrent first requests serialize on the row
+// and all callers read the same winning seed.
+func (r *accountRepository) EnsureCodexFingerprintSeed(ctx context.Context, id int64) (string, error) {
+	extraExpression := ensureCodexFingerprintSeedSQL("COALESCE(extra, '{}'::jsonb)")
+	rows, err := r.sql.QueryContext(ctx,
+		"UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW() "+
+			"WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai' AND type = 'oauth' AND NOT COALESCE("+codexFingerprintSeedValidSQL("extra")+", false) "+
+			"RETURNING extra ->> 'codex_fingerprint_seed'",
+		id,
+	)
+	if err != nil {
+		return "", err
+	}
+	seed, updated, err := scanSingleString(rows)
+	if err != nil {
+		return "", err
+	}
+	if updated {
+		if dbent.TxFromContext(ctx) == nil {
+			r.syncSchedulerAccountSnapshot(ctx, id)
+		}
+		return seed, nil
+	}
+
+	rows, err = r.sql.QueryContext(ctx,
+		"SELECT extra ->> 'codex_fingerprint_seed' FROM accounts "+
+			"WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai' AND type = 'oauth' AND COALESCE("+codexFingerprintSeedValidSQL("extra")+", false)",
+		id,
+	)
+	if err != nil {
+		return "", err
+	}
+	seed, found, err := scanSingleString(rows)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", service.ErrAccountNotFound
+	}
+	return seed, nil
+}
+
+// EnsureAccountExtraValue installs value only while key is absent and returns
+// the durable winner. The UPDATE predicate is rechecked after PostgreSQL row-lock
+// waits, so concurrent first writers cannot overwrite one another.
+func (r *accountRepository) EnsureAccountExtraValue(ctx context.Context, id int64, key string, value any) (any, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, errors.New("account extra key is required")
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := r.sql.QueryContext(ctx,
+		"UPDATE accounts SET extra = jsonb_set(COALESCE(extra, '{}'::jsonb), ARRAY[$2]::text[], $3::jsonb, true), updated_at = NOW() "+
+			"WHERE id = $1 AND deleted_at IS NULL AND NOT (COALESCE(extra, '{}'::jsonb) ? $2) RETURNING extra -> $2",
+		id, key, string(payload),
+	)
+	if err != nil {
+		return nil, err
+	}
+	winner, updated, err := scanSingleJSONValue(rows)
+	if err != nil {
+		return nil, err
+	}
+	if updated {
+		if dbent.TxFromContext(ctx) == nil {
+			r.syncSchedulerAccountSnapshot(ctx, id)
+		}
+		return winner, nil
+	}
+
+	rows, err = r.sql.QueryContext(ctx,
+		"SELECT extra -> $2 FROM accounts WHERE id = $1 AND deleted_at IS NULL AND COALESCE(extra, '{}'::jsonb) ? $2",
+		id, key,
+	)
+	if err != nil {
+		return nil, err
+	}
+	winner, found, err := scanSingleJSONValue(rows)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, service.ErrAccountNotFound
+	}
+	return winner, nil
+}
+
+// CompareAndSwapAccountExtraValue atomically replaces one account extra value
+// only when it still equals expected. On contention it returns the durable
+// winner so callers can recompute and retry without holding an application lock.
+func (r *accountRepository) CompareAndSwapAccountExtraValue(ctx context.Context, id int64, key string, expected, replacement any) (any, bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, false, errors.New("account extra key is required")
+	}
+	expectedJSON, err := json.Marshal(expected)
+	if err != nil {
+		return nil, false, err
+	}
+	replacementJSON, err := json.Marshal(replacement)
+	if err != nil {
+		return nil, false, err
+	}
+
+	rows, err := r.sql.QueryContext(ctx,
+		"UPDATE accounts SET extra = jsonb_set(COALESCE(extra, '{}'::jsonb), ARRAY[$2]::text[], $4::jsonb, true), updated_at = NOW() "+
+			"WHERE id = $1 AND deleted_at IS NULL AND COALESCE(extra -> $2, 'null'::jsonb) = $3::jsonb RETURNING extra -> $2",
+		id, key, string(expectedJSON), string(replacementJSON),
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	winner, swapped, err := scanSingleJSONValue(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	if swapped {
+		if dbent.TxFromContext(ctx) == nil {
+			r.syncSchedulerAccountSnapshot(ctx, id)
+		}
+		return winner, true, nil
+	}
+
+	rows, err = r.sql.QueryContext(ctx,
+		"SELECT extra -> $2 FROM accounts WHERE id = $1 AND deleted_at IS NULL AND COALESCE(extra, '{}'::jsonb) ? $2",
+		id, key,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	winner, found, err := scanSingleJSONValue(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found {
+		return nil, false, service.ErrAccountNotFound
+	}
+	return winner, false, nil
+}
+
+func scanSingleString(rows *sql.Rows) (string, bool, error) {
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return "", false, rows.Err()
+	}
+	var value string
+	if err := rows.Scan(&value); err != nil {
+		return "", false, err
+	}
+	return value, true, rows.Err()
+}
+
+func scanSingleJSONValue(rows *sql.Rows) (any, bool, error) {
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return nil, false, rows.Err()
+	}
+	var raw []byte
+	if err := rows.Scan(&raw); err != nil {
+		return nil, false, err
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false, err
+	}
+	return value, true, rows.Err()
+}
+
 // UpdateUpstreamBillingProbeSnapshot stores a probe result only while the
 // network identity used by that probe is still current.
 func (r *accountRepository) UpdateUpstreamBillingProbeSnapshot(

@@ -111,9 +111,32 @@ type cachedOpenAICodexClientVersion struct {
 	expiresAt int64 // unix nano
 }
 
+type cachedOpenAICodexDevicePoolSize struct {
+	value     int
+	expiresAt int64
+}
+
+type cachedOpenAICodexDevicePlatformRatio struct {
+	value     codexDevicePlatformRatio
+	expiresAt int64
+}
+
+type cachedOpenAICodexUAPersonaEnabled struct {
+	value     bool
+	expiresAt int64
+}
+
 const openAICodexClientVersionCacheTTL = 60 * time.Second
 const openAICodexClientVersionErrorTTL = 5 * time.Second
 const openAICodexClientVersionDBTimeout = 5 * time.Second
+
+const openAICodexDevicePoolCacheTTL = 60 * time.Second
+const openAICodexDevicePoolErrorTTL = 5 * time.Second
+const openAICodexDevicePoolDBTimeout = 5 * time.Second
+
+const openAICodexUAPersonaCacheTTL = 60 * time.Second
+const openAICodexUAPersonaErrorTTL = 5 * time.Second
+const openAICodexUAPersonaDBTimeout = 5 * time.Second
 
 // openAICodexClientVersionSFKey singleflight 键。
 const openAICodexClientVersionSFKey = "openai_codex_client_version"
@@ -307,6 +330,120 @@ func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
 		return ua
 	}
 	return fallback
+}
+
+// GetOpenAICodexDevicePoolSize 返回指纹收敛账号的 rendezvous 设备池大小。
+// 缺失、非法或读取失败时返回 1，逐字保留此前的单设备身份派生。1→3
+// 首次启用会让约 2/3 用户迁移；此后逐级扩容只迁移被新增节点赢得的用户。
+func (s *SettingService) GetOpenAICodexDevicePoolSize(ctx context.Context) int {
+	const fallback = 1
+	if s == nil || s.settingRepo == nil {
+		return fallback
+	}
+	if cached, ok := s.openAICodexDevicePoolCache.Load().(*cachedOpenAICodexDevicePoolSize); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return normalizeOpenAICodexDevicePoolSize(cached.value)
+	}
+	result, _, _ := s.openAICodexDevicePoolSF.Do(SettingKeyOpenAICodexDevicePoolSize, func() (any, error) {
+		if cached, ok := s.openAICodexDevicePoolCache.Load().(*cachedOpenAICodexDevicePoolSize); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return normalizeOpenAICodexDevicePoolSize(cached.value), nil
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAICodexDevicePoolDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexDevicePoolSize)
+		ttl := openAICodexDevicePoolCacheTTL
+		if err != nil && !errors.Is(err, ErrSettingNotFound) {
+			slog.Warn("failed to get openai codex device pool size setting", "error", err)
+			ttl = openAICodexDevicePoolErrorTTL
+		}
+		poolSize := fallback
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(value)); parseErr == nil {
+			poolSize = normalizeOpenAICodexDevicePoolSize(parsed)
+		}
+		s.openAICodexDevicePoolCache.Store(&cachedOpenAICodexDevicePoolSize{
+			value: poolSize, expiresAt: time.Now().Add(ttl).UnixNano(),
+		})
+		return poolSize, nil
+	})
+	if poolSize, ok := result.(int); ok {
+		return normalizeOpenAICodexDevicePoolSize(poolSize)
+	}
+	return fallback
+}
+
+// GetOpenAICodexDevicePoolPlatformRatio returns validated mac:windows:linux
+// weights. Missing, malformed, and transient read failures use 1:1:2.
+func (s *SettingService) GetOpenAICodexDevicePoolPlatformRatio(ctx context.Context) codexDevicePlatformRatio {
+	fallback, _ := parseCodexDevicePlatformRatio(defaultOpenAICodexDevicePoolPlatformRatio)
+	if s == nil || s.settingRepo == nil {
+		return fallback
+	}
+	if cached, ok := s.openAICodexDeviceRatioCache.Load().(*cachedOpenAICodexDevicePlatformRatio); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.value
+	}
+	result, _, _ := s.openAICodexDevicePoolSF.Do(SettingKeyOpenAICodexDevicePoolPlatformRatio, func() (any, error) {
+		if cached, ok := s.openAICodexDeviceRatioCache.Load().(*cachedOpenAICodexDevicePlatformRatio); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return cached.value, nil
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAICodexDevicePoolDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexDevicePoolPlatformRatio)
+		ttl := openAICodexDevicePoolCacheTTL
+		if err != nil && !errors.Is(err, ErrSettingNotFound) {
+			slog.Warn("failed to get openai codex device platform ratio setting", "error", err)
+			ttl = openAICodexDevicePoolErrorTTL
+		}
+		ratio, ok := parseCodexDevicePlatformRatio(value)
+		if !ok {
+			ratio = fallback
+		}
+		s.openAICodexDeviceRatioCache.Store(&cachedOpenAICodexDevicePlatformRatio{
+			value: ratio, expiresAt: time.Now().Add(ttl).UnixNano(),
+		})
+		return ratio, nil
+	})
+	if ratio, ok := result.(codexDevicePlatformRatio); ok {
+		return ratio
+	}
+	return fallback
+}
+
+// GetOpenAICodexUAPersonaEnabled 返回设备级 UA persona 开关；缺失或失败均关闭。
+func (s *SettingService) GetOpenAICodexUAPersonaEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	if cached, ok := s.openAICodexUAPersonaCache.Load().(*cachedOpenAICodexUAPersonaEnabled); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.value
+	}
+	result, _, _ := s.openAICodexUAPersonaSF.Do(SettingKeyOpenAICodexUAPersonaEnabled, func() (any, error) {
+		if cached, ok := s.openAICodexUAPersonaCache.Load().(*cachedOpenAICodexUAPersonaEnabled); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return cached.value, nil
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAICodexUAPersonaDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexUAPersonaEnabled)
+		ttl := openAICodexUAPersonaCacheTTL
+		if err != nil && !errors.Is(err, ErrSettingNotFound) {
+			slog.Warn("failed to get openai codex ua persona setting", "error", err)
+			ttl = openAICodexUAPersonaErrorTTL
+		}
+		enabled := strings.TrimSpace(value) == "true"
+		s.openAICodexUAPersonaCache.Store(&cachedOpenAICodexUAPersonaEnabled{
+			value: enabled, expiresAt: time.Now().Add(ttl).UnixNano(),
+		})
+		return enabled, nil
+	})
+	enabled, _ := result.(bool)
+	return enabled
 }
 
 // GetOpenAICodexClientVersion 返回出站声明的 Codex 客户端版本号。

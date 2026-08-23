@@ -68,6 +68,75 @@ func TestUpdateExtraEnsuresCodexFingerprintSeedAtomicallyWhenEnabling(t *testing
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestEnsureCodexFingerprintSeedReturnsAtomicallyCreatedSeed(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+
+	mock.ExpectQuery(`(?s)UPDATE accounts SET extra = .*gen_random_uuid\(\)::text.*WHERE id = \$1.*NOT COALESCE\(.*false\).*RETURNING extra ->> 'codex_fingerprint_seed'`).
+		WithArgs(int64(27)).
+		WillReturnRows(sqlmock.NewRows([]string{"seed"}).AddRow("33333333-3333-4333-8333-333333333333"))
+
+	seed, err := repo.EnsureCodexFingerprintSeed(context.Background(), 27)
+
+	require.NoError(t, err)
+	require.Equal(t, "33333333-3333-4333-8333-333333333333", seed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestEnsureAccountExtraValueReturnsExistingFirstWriterWinner(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+
+	mock.ExpectQuery(`(?s)UPDATE accounts SET extra = jsonb_set.*AND NOT .* \? \$2.*RETURNING extra -> \$2`).
+		WithArgs(int64(27), "codex_ua_persona", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"value"}))
+	mock.ExpectQuery(`(?s)SELECT extra -> \$2 FROM accounts WHERE id = \$1`).
+		WithArgs(int64(27), "codex_ua_persona").
+		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"platform":"windows","sandbox":"none"}`)))
+
+	winner, err := repo.EnsureAccountExtraValue(context.Background(), 27, "codex_ua_persona", map[string]any{
+		"platform": "mac",
+		"sandbox":  "seatbelt",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"platform": "windows", "sandbox": "none"}, winner)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCompareAndSwapAccountExtraValueReturnsConcurrentWinner(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+
+	mock.ExpectQuery(`(?s)UPDATE accounts SET extra = jsonb_set.*COALESCE\(extra -> \$2, 'null'::jsonb\) = \$3::jsonb.*RETURNING extra -> \$2`).
+		WithArgs(int64(27), "codex_device_pool", "null", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"value"}))
+	mock.ExpectQuery(`(?s)SELECT extra -> \$2 FROM accounts WHERE id = \$1`).
+		WithArgs(int64(27), "codex_device_pool").
+		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"version":1,"next_slot":2,"slots":[{"id":1,"platform":"mac","sandbox":"seatbelt","created_for":"101"}]}`)))
+
+	winner, swapped, err := repo.CompareAndSwapAccountExtraValue(
+		context.Background(), 27, "codex_device_pool", nil,
+		map[string]any{"version": 1, "next_slot": 2},
+	)
+
+	require.NoError(t, err)
+	require.False(t, swapped)
+	require.Equal(t, map[string]any{
+		"version": float64(1), "next_slot": float64(2),
+		"slots": []any{map[string]any{
+			"id": float64(1), "platform": "mac", "sandbox": "seatbelt", "created_for": "101",
+		}},
+	}, winner)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestBulkUpdateCodexFingerprintSeedRollsBackWhenUpdateFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

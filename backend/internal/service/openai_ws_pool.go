@@ -2024,6 +2024,10 @@ func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Head
 		userAgent:    normalizeOpenAIWSStableIdentityHeader(headers, "user-agent"),
 		betaFeatures: normalizeOpenAIWSBetaFeatures(headers),
 	}
+	if account != nil && account.IsOpenAIOAuth() {
+		key.sessionIDHyphen = normalizeOpenAIWSStableIdentityHeader(headers, "session-id")
+		key.sessionIDUnderscore = normalizeOpenAIWSStableIdentityHeader(headers, "session_id")
+	}
 	mode := activeCodexFingerprintMode(account)
 	if mode == codexFingerprintOff {
 		return key
@@ -2032,8 +2036,6 @@ func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Head
 	if mode == codexFingerprintDevice {
 		return key
 	}
-	key.sessionIDHyphen = normalizeOpenAIWSStableIdentityHeader(headers, "session-id")
-	key.sessionIDUnderscore = normalizeOpenAIWSStableIdentityHeader(headers, "session_id")
 	key.threadID = normalizeOpenAIWSStableIdentityHeader(headers, "thread-id")
 	key.clientRequestID = normalizeOpenAIWSStableIdentityHeader(headers, "x-client-request-id")
 	key.codexWindowID = normalizeOpenAIWSStableIdentityHeader(headers, "x-codex-window-id")

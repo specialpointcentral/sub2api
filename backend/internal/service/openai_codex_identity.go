@@ -1,6 +1,9 @@
 package service
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
@@ -33,8 +36,8 @@ func NormalizeCodexClientVersion(version string) string {
 }
 
 // codexSandboxForUserAgent 按最终出站 User-Agent 的 OS 返回真实 Codex
-// turn metadata 使用的 sandbox 名称。识别不到 OS 时返回空串，由调用方保留
-// 客户端原值，避免凭不完整 UA 猜测运行平台。
+// turn metadata 使用的 sandbox 名称。通用 Windows UA 与识别不到的 OS 都返回
+// 空串，由调用方保留客户端原值；Windows 的 "none" 仅由 persona 专属映射产生。
 func codexSandboxForUserAgent(userAgent string) string {
 	platform := codexUserAgentPlatform(userAgent)
 	switch {
@@ -46,6 +49,126 @@ func codexSandboxForUserAgent(userAgent string) string {
 	default:
 		return ""
 	}
+}
+
+type codexUAPersona string
+
+const (
+	codexUAPersonaMac     codexUAPersona = "mac"
+	codexUAPersonaUbuntu  codexUAPersona = "ubuntu"
+	codexUAPersonaWindows codexUAPersona = "windows"
+)
+
+const codexUAPersonaExtraKey = "codex_ua_persona"
+
+type codexUAPersonaSelection struct {
+	Platform codexUAPersona
+	Sandbox  string
+}
+
+func (p codexUAPersonaSelection) extraValue() map[string]any {
+	return map[string]any{
+		"platform": string(p.Platform),
+		"sandbox":  p.Sandbox,
+	}
+}
+
+func canonicalCodexUAPersonaSelection(value any) (codexUAPersonaSelection, bool) {
+	var platform string
+	var sandbox string
+	switch typed := value.(type) {
+	case map[string]any:
+		platform, _ = typed["platform"].(string)
+		sandbox, _ = typed["sandbox"].(string)
+	case map[string]string:
+		platform = typed["platform"]
+		sandbox = typed["sandbox"]
+	default:
+		return codexUAPersonaSelection{}, false
+	}
+	return normalizeCodexUAPersonaSelection(platform, sandbox)
+}
+
+func normalizeCodexUAPersonaSelection(platform, sandbox string) (codexUAPersonaSelection, bool) {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	sandbox = strings.ToLower(strings.TrimSpace(sandbox))
+	var persona codexUAPersona
+	switch {
+	case hasCodexPlatformName(platform, "mac os x"), hasCodexPlatformName(platform, "macos"),
+		hasCodexPlatformName(platform, "darwin"), hasCodexPlatformName(platform, "mac"):
+		persona = codexUAPersonaMac
+	case hasCodexPlatformName(platform, "ubuntu"), hasCodexPlatformName(platform, "linux"):
+		persona = codexUAPersonaUbuntu
+	case hasCodexPlatformName(platform, "windows"):
+		persona = codexUAPersonaWindows
+	default:
+		return codexUAPersonaSelection{}, false
+	}
+	wantSandbox := sandboxForCodexUAPersona(persona)
+	if sandbox != wantSandbox {
+		return codexUAPersonaSelection{}, false
+	}
+	return codexUAPersonaSelection{Platform: persona, Sandbox: wantSandbox}, true
+}
+
+func sandboxForCodexUAPersona(persona codexUAPersona) string {
+	switch persona {
+	case codexUAPersonaMac:
+		return "seatbelt"
+	case codexUAPersonaUbuntu:
+		return "seccomp"
+	case codexUAPersonaWindows:
+		return "none"
+	default:
+		return ""
+	}
+}
+
+func observedCodexUAPersonaSelection(headers http.Header) (codexUAPersonaSelection, bool) {
+	if headers == nil {
+		return codexUAPersonaSelection{}, false
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(headers.Get("x-codex-turn-metadata"))), &metadata); err != nil || metadata == nil {
+		return codexUAPersonaSelection{}, false
+	}
+	sandbox, _ := metadata["sandbox"].(string)
+	return normalizeCodexUAPersonaSelection(codexUserAgentPlatform(headers.Get("user-agent")), sandbox)
+}
+
+func weightedCodexUAPersonaSelection(seed string) codexUAPersonaSelection {
+	persona := deriveCodexUAPersona(seed)
+	return codexUAPersonaSelection{Platform: persona, Sandbox: sandboxForCodexUAPersona(persona)}
+}
+
+// deriveCodexUAPersona 按设备 seed 稳定落入开发者工具用户的 OS 分布：
+// Mac 45% / Ubuntu 30% / Windows 25%。
+func deriveCodexUAPersona(deviceSeed string) codexUAPersona {
+	hash := sha256.Sum256([]byte("sub2api:codex-ua-persona:v1:" + deviceSeed))
+	bucket := binary.BigEndian.Uint64(hash[:8]) % 100
+	switch {
+	case bucket < 45:
+		return codexUAPersonaMac
+	case bucket < 75:
+		return codexUAPersonaUbuntu
+	default:
+		return codexUAPersonaWindows
+	}
+}
+
+func buildCodexPersonaUserAgent(persona codexUAPersona, version string) string {
+	if version = NormalizeCodexClientVersion(version); version == "" {
+		version = codexCLIVersion
+	}
+	suffix := codexCLIUserAgentSuffix
+	switch persona {
+	case codexUAPersonaMac:
+		suffix = " (Mac OS X 15.6.1; arm64) Apple_Terminal"
+	case codexUAPersonaWindows:
+		suffix = " (Windows 11.0.0; x86_64) WindowsTerminal"
+	}
+	return openai.CodexDefaultOriginator + "/" + version + suffix +
+		" (" + openai.CodexDefaultOriginator + "; " + version + ")"
 }
 
 func codexUserAgentPlatform(userAgent string) string {
