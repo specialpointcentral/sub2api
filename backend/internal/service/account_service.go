@@ -237,7 +237,7 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (
 		Platform:    req.Platform,
 		Type:        req.Type,
 		Credentials: SanitizeStoredCredentials(req.Platform, req.Credentials),
-		Extra:       prepareCodexFingerprintExtraForCreate(req.Platform, req.Type, req.Extra),
+		Extra:       prepareCodexFingerprintExtraForCreate(req.Platform, req.Type, req.Credentials, req.Extra),
 		ProxyID:     req.ProxyID,
 		Concurrency: req.Concurrency,
 		Priority:    req.Priority,
