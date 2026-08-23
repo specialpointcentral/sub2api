@@ -126,16 +126,17 @@ type kiroUsageCache struct {
 }
 
 const (
-	apiCacheTTL             = 3 * time.Minute
-	apiErrorCacheTTL        = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
-	antigravityErrorTTL     = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
-	apiQueryMaxJitter       = 800 * time.Millisecond // 用量查询最大随机延迟
-	windowStatsCacheTTL     = 1 * time.Minute
-	openAIProbeCacheTTL     = 10 * time.Minute
-	grokProbeRetryTTL       = 1 * time.Minute
-	grokFreeQuotaWindow     = 24 * time.Hour
-	kiroUsageErrorTTL       = 1 * time.Minute // Kiro 错误缓存 TTL（可恢复错误）
-	openAICodexProbeVersion = codexCLIVersion // 与网关出站身份同源，避免两处硬编码版本各自漂移
+	apiCacheTTL                       = 3 * time.Minute
+	apiErrorCacheTTL                  = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
+	antigravityErrorTTL               = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
+	apiQueryMaxJitter                 = 800 * time.Millisecond // 用量查询最大随机延迟
+	windowStatsCacheTTL               = 1 * time.Minute
+	openAIProbeCacheTTL               = 10 * time.Minute
+	grokProbeRetryTTL                 = 1 * time.Minute
+	grokFreeQuotaWindow               = 24 * time.Hour
+	kiroUsageErrorTTL                 = 1 * time.Minute // Kiro 错误缓存 TTL（可恢复错误）
+	openAICodexProbeVersion           = codexCLIVersion // 与网关出站身份同源，避免两处硬编码版本各自漂移
+	openAIQuotaProbeRedisRetryBackoff = 5 * time.Second
 )
 
 // UsageCache 封装账户使用量相关的缓存
@@ -147,7 +148,7 @@ type UsageCache struct {
 	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
 	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
 	kiroUsageFlight   singleflight.Group // 防止同一 Kiro 账号的并发请求击穿缓存
-	openAIProbeCache  sync.Map           // accountID -> time.Time
+	openAIProbeCache  sync.Map           // accountID -> *openAIProbeScheduleState
 	grokProbeCache    sync.Map           // accountID -> last billing probe attempt
 }
 
@@ -354,7 +355,7 @@ type AccountUsageService struct {
 	antigravityQuotaFetcher *AntigravityQuotaFetcher
 	grokQuotaFetcher        *GrokQuotaFetcher
 	grokQuotaService        *GrokQuotaService
-	openAIQuotaService      *OpenAIQuotaService
+	openAIQuotaService      openAIQuotaUsageQuerier
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
@@ -363,6 +364,21 @@ type AccountUsageService struct {
 	concurrencyService      *ConcurrencyService
 	userRepo                UserRepository
 	kiroCooldownStore       KiroCooldownStore
+	settingService          *SettingService
+	openAIProbeJitterUnit   func() float64
+}
+
+type openAIQuotaUsageQuerier interface {
+	QueryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error)
+}
+
+type openAIProbeScheduleState struct {
+	mu                 sync.Mutex
+	nextProbeAt        time.Time
+	distributedRetryAt time.Time
+	baseInterval       time.Duration
+	jitterRatio        float64
+	initialized        bool
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -408,6 +424,12 @@ func (s *AccountUsageService) SetConcurrencyService(cs *ConcurrencyService) {
 // Called after construction to avoid circular dependency.
 func (s *AccountUsageService) SetUserRepository(repo UserRepository) {
 	s.userRepo = repo
+}
+
+func (s *AccountUsageService) SetSettingService(settingService *SettingService) {
+	if s != nil {
+		s.settingService = settingService
+	}
 }
 
 func (s *AccountUsageService) SetKiroCooldownStore(store KiroCooldownStore) *AccountUsageService {
@@ -805,7 +827,8 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 
 	applyExtraToUsage(usage, account.Extra, now)
 
-	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
+	probeEligible := force || shouldRefreshOpenAICodexSnapshot(account, usage, now) || supportsAutomaticOpenAICodexProbe(account) || s.openAICodexProbeScheduleDue(ctx, account.ID, now)
+	if probeEligible && s.shouldProbeOpenAICodexSnapshotWithContext(ctx, account.ID, now, openAICodexSnapshotUpdatedAt(account), force) {
 		if account.IsShadow() {
 			// Spark shadow accounts fetch usage from /wham/usage (bengalfox channel)
 			// via the shared OpenAIQuotaService, which resolves credentials from the
@@ -855,6 +878,28 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	return usage, nil
 }
 
+func supportsAutomaticOpenAICodexProbe(account *Account) bool {
+	if account == nil || !account.IsOpenAIOAuth() {
+		return false
+	}
+	return account.IsShadow() || account.IsOpenAIResponsesWebSocketV2Enabled()
+}
+
+func openAICodexSnapshotUpdatedAt(account *Account) time.Time {
+	if account == nil || account.Extra == nil {
+		return time.Time{}
+	}
+	raw, ok := account.Extra["codex_usage_updated_at"]
+	if !ok {
+		return time.Time{}
+	}
+	updatedAt, err := parseTime(fmt.Sprint(raw))
+	if err != nil {
+		return time.Time{}
+	}
+	return updatedAt
+}
+
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {
 	if account == nil {
 		return false
@@ -896,20 +941,133 @@ func isOpenAICodexSnapshotStale(account *Account, now time.Time) bool {
 	return now.Sub(ts) >= openAIProbeCacheTTL
 }
 
-func (s *AccountUsageService) shouldProbeOpenAICodexSnapshot(accountID int64, now time.Time, force ...bool) bool {
-	if s == nil || s.cache == nil || accountID <= 0 {
+func (s *AccountUsageService) shouldProbeOpenAICodexSnapshotWithContext(ctx context.Context, accountID int64, now, lastProbeAt time.Time, force ...bool) bool {
+	if s == nil || accountID <= 0 {
 		return true
 	}
 	forceProbe := len(force) > 0 && force[0]
-	if !forceProbe {
-		if cached, ok := s.cache.openAIProbeCache.Load(accountID); ok {
-			if ts, ok := cached.(time.Time); ok && now.Sub(ts) < openAIProbeCacheTTL {
+	if forceProbe {
+		return true
+	}
+	baseInterval, jitterRatio := s.openAIQuotaProbeScheduleSettings(ctx)
+	unit := rand.Float64()
+	if s.openAIProbeJitterUnit != nil {
+		unit = s.openAIProbeJitterUnit()
+	}
+	interval := jitteredOpenAIQuotaProbeInterval(baseInterval, jitterRatio, unit)
+	var state *openAIProbeScheduleState
+	if s.cache != nil {
+		value, _ := s.cache.openAIProbeCache.LoadOrStore(accountID, &openAIProbeScheduleState{})
+		state, _ = value.(*openAIProbeScheduleState)
+		if state == nil {
+			state = &openAIProbeScheduleState{}
+			s.cache.openAIProbeCache.Store(accountID, state)
+		}
+	}
+	if s.concurrencyService != nil {
+		if state != nil {
+			state.mu.Lock()
+			degradedAndGated := state.initialized && state.baseInterval == baseInterval && state.jitterRatio == jitterRatio && now.Before(state.nextProbeAt) && now.Before(state.distributedRetryAt)
+			state.mu.Unlock()
+			if degradedAndGated {
 				return false
 			}
 		}
+		scheduleVersion := fmt.Sprintf("%d:%.6f", baseInterval.Milliseconds(), jitterRatio)
+		initialNotBefore := time.Time{}
+		if !lastProbeAt.IsZero() {
+			initialNotBefore = lastProbeAt.Add(interval)
+		}
+		claimed, err := s.concurrencyService.TryClaimOpenAIQuotaProbe(ctx, accountID, interval, scheduleVersion, initialNotBefore)
+		if err == nil {
+			if state != nil {
+				state.mu.Lock()
+				state.distributedRetryAt = time.Time{}
+				state.mu.Unlock()
+			}
+			return claimed
+		}
+		// The Redis attempt may itself be slow. Anchor degraded backoff and the
+		// local fallback schedule at the failure time, not the stale request-entry
+		// timestamp supplied by getOpenAIUsage.
+		now = time.Now()
+		if state != nil {
+			state.mu.Lock()
+			state.distributedRetryAt = now.Add(openAIQuotaProbeRedisRetryBackoff)
+			state.mu.Unlock()
+		}
+		slog.Warn("openai_quota_probe_distributed_schedule_failed_open",
+			"account_id", accountID,
+			"error", err,
+		)
 	}
-	s.cache.openAIProbeCache.Store(accountID, now)
+	if state == nil {
+		return true
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	settingsChanged := state.initialized && (state.baseInterval != baseInterval || state.jitterRatio != jitterRatio)
+	if !settingsChanged && state.initialized && now.Before(state.nextProbeAt) {
+		return false
+	}
+	if !state.initialized && !lastProbeAt.IsZero() {
+		state.nextProbeAt = lastProbeAt.Add(interval)
+		state.baseInterval = baseInterval
+		state.jitterRatio = jitterRatio
+		state.initialized = true
+		if now.Before(state.nextProbeAt) {
+			return false
+		}
+	}
+	state.nextProbeAt = now.Add(interval)
+	state.baseInterval = baseInterval
+	state.jitterRatio = jitterRatio
+	state.initialized = true
 	return true
+}
+
+func jitteredOpenAIQuotaProbeInterval(base time.Duration, ratio, unit float64) time.Duration {
+	if base <= 0 {
+		base = openAIProbeCacheTTL
+	}
+	if ratio < 0 {
+		ratio = 0
+	} else if ratio > MaxOpenAIQuotaProbeJitterRatio {
+		ratio = MaxOpenAIQuotaProbeJitterRatio
+	}
+	if unit < 0 {
+		unit = 0
+	} else if unit > 1 {
+		unit = 1
+	}
+	factor := 1 - ratio + 2*ratio*unit
+	return time.Duration(float64(base) * factor)
+}
+
+func (s *AccountUsageService) openAIQuotaProbeScheduleSettings(ctx context.Context) (time.Duration, float64) {
+	settings := defaultOpenAITrafficShapingSettings()
+	if s != nil && s.settingService != nil {
+		settings = s.settingService.GetOpenAITrafficShapingSettings(ctx)
+	}
+	return time.Duration(settings.QuotaProbeIntervalMinutes) * time.Minute, settings.QuotaProbeJitterRatio
+}
+
+func (s *AccountUsageService) openAICodexProbeScheduleDue(ctx context.Context, accountID int64, now time.Time) bool {
+	if s == nil || s.cache == nil || accountID <= 0 {
+		return false
+	}
+	value, ok := s.cache.openAIProbeCache.Load(accountID)
+	if !ok {
+		return false
+	}
+	state, ok := value.(*openAIProbeScheduleState)
+	if !ok || state == nil {
+		return false
+	}
+	baseInterval, jitterRatio := s.openAIQuotaProbeScheduleSettings(ctx)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.initialized && (state.baseInterval != baseInterval || state.jitterRatio != jitterRatio || !now.Before(state.nextProbeAt))
 }
 
 func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, account *Account) (map[string]any, error) {

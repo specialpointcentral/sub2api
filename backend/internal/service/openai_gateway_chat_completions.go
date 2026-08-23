@@ -331,6 +331,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		proxyURL = account.Proxy.URL()
 	}
 	tlsProfile := s.resolveHTTPUpstreamTLSProfile(account)
+	if paceErr := s.waitForOpenAIAccountStart(ctx, account); paceErr != nil {
+		return nil, paceErr
+	}
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

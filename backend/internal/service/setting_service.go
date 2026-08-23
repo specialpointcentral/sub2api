@@ -135,6 +135,8 @@ type SettingService struct {
 	openAICodexDevicePoolSF     singleflight.Group
 	openAICodexUAPersonaCache   atomic.Value // *cachedOpenAICodexUAPersonaEnabled
 	openAICodexUAPersonaSF      singleflight.Group
+	openAITrafficShapingCache   atomic.Value // *cachedOpenAITrafficShapingSettings
+	openAITrafficShapingSF      singleflight.Group
 	codexRestrictionPolicyCache atomic.Value // *cachedCodexRestrictionPolicy
 	codexRestrictionPolicySF    singleflight.Group
 

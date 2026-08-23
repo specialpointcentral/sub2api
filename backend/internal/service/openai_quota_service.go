@@ -35,7 +35,6 @@ const (
 	chatGPTRateLimitResetURL    = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 	openaiQuotaUpstreamTimeout  = 20 * time.Second
 	openaiQuotaCodexBeta        = "codex-1"
-	openaiQuotaCodexOriginator  = "Codex Desktop"
 	openaiQuotaCodexLanguageTag = "zh-CN"
 	openaiQuotaSecFetchSite     = "none"
 	openaiQuotaSecFetchMode     = "no-cors"
@@ -506,6 +505,7 @@ func (s *OpenAIQuotaService) buildCodexQuotaHeaders(ctx context.Context, account
 			return nil, "", fmt.Errorf("agent identity shadow credentials are unavailable")
 		}
 	}
+	applyCodexQuotaIdentity(headers, account)
 	if !account.IsOpenAIAgentIdentity() {
 		return headers, "", nil
 	}
@@ -544,7 +544,6 @@ func buildCodexCommonHeaders(accessToken, chatGPTAccountID string, fedRAMP bool)
 		"chatgpt-account-id": chatGPTAccountID,
 		"openai-beta":        openaiQuotaCodexBeta,
 		"oai-language":       openaiQuotaCodexLanguageTag,
-		"originator":         openaiQuotaCodexOriginator,
 		"accept":             "application/json",
 		"sec-fetch-site":     openaiQuotaSecFetchSite,
 		"sec-fetch-mode":     openaiQuotaSecFetchMode,
@@ -554,7 +553,22 @@ func buildCodexCommonHeaders(accessToken, chatGPTAccountID string, fedRAMP bool)
 	if fedRAMP {
 		headers["x-openai-fedramp"] = "true"
 	}
+	applyCodexQuotaIdentity(headers, nil)
 	return headers
+}
+
+func applyCodexQuotaIdentity(headers map[string]string, account *Account) {
+	if headers == nil {
+		return
+	}
+	userAgent := ""
+	if account != nil {
+		userAgent = account.GetOpenAIUserAgent()
+	}
+	identity := resolveCodexOutboundIdentity(userAgent)
+	headers["user-agent"] = identity.userAgent
+	headers["originator"] = identity.originator
+	headers["version"] = identity.version
 }
 
 // generateRedeemRequestID produces a UUID-v4-shaped string without pulling in a
