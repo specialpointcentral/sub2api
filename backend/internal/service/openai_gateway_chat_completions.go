@@ -241,6 +241,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 	logger.L().Debug("openai chat_completions: model mapping applied", logFields...)
 
+	stageCodexFingerprintIDs(c, nil)
 	if account.UsesOpenAICodexProtocol() {
 		var reqBody map[string]any
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
@@ -267,20 +268,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		} else if promptCacheKey != "" {
 			reqBody["prompt_cache_key"] = promptCacheKey
 		}
-		stageCodexFingerprintIDs(c, nil)
-		var clientHeaders http.Header
-		if c != nil && c.Request != nil {
-			clientHeaders = c.Request.Header
-		}
-		clientHeaders = withCodexFingerprintSessionHint(clientHeaders, codexFingerprintSessionHint(reqBody["client_metadata"], reqBody["prompt_cache_key"]))
-		fpIDs, fpResolveErr := s.resolveCodexFingerprintIDsForOutbound(c, account, clientHeaders, true)
-		if fpResolveErr != nil {
+		if _, fpResolveErr := s.stageCodexFingerprintForMap(c, account, reqBody, promptCacheKey, true); fpResolveErr != nil {
 			return nil, fmt.Errorf("resolve outbound codex fingerprint: %w", fpResolveErr)
 		}
-		if fpIDs != nil {
-			applyCodexFingerprintClientMetadata(reqBody, fpIDs)
-		}
-		stageCodexFingerprintIDs(c, fpIDs)
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
@@ -303,6 +293,20 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 					return nil, fmt.Errorf("remarshal after prompt cache key injection: %w", err)
 				}
 			}
+		}
+	}
+
+	if account.IsOpenAIApiKey() && shouldResolveCodexFingerprint(account) {
+		var reqBody map[string]any
+		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
+			return nil, fmt.Errorf("unmarshal for codex fingerprint: %w", err)
+		}
+		if _, fpResolveErr := s.stageCodexFingerprintForMap(c, account, reqBody, promptCacheKey, true); fpResolveErr != nil {
+			return nil, fmt.Errorf("resolve outbound codex fingerprint: %w", fpResolveErr)
+		}
+		responsesBody, err = json.Marshal(reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("remarshal after codex fingerprint: %w", err)
 		}
 	}
 
@@ -337,7 +341,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	stagedIDs := stagedCodexFingerprintIDs(c, account)
-	if promptCacheKey != "" && (account.Type != AccountTypeOAuth || stagedIDs == nil || stagedIDs.sessionID == "") {
+	if promptCacheKey != "" && (stagedIDs == nil || stagedIDs.sessionID == "") {
 		apiKeyID := getAPIKeyIDFromContext(c)
 		upstreamReq.Header.Set("session_id", generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey)))
 	}
