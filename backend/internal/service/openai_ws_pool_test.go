@@ -1231,6 +1231,30 @@ func TestOpenAIWSConnPool_EffectiveMaxConnsDisabledFallbackHardCap(t *testing.T)
 	require.Equal(t, 8, pool.effectiveMaxConnsByAccount(account), "关闭动态模式后应保持旧行为")
 }
 
+func TestOpenAIWSConnPool_AcquireRespectsAccountConcurrencyLimit(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 8
+	pool := newOpenAIWSConnPool(cfg)
+	t.Cleanup(pool.Close)
+	pool.setClientDialerForTest(&openAIWSFakeDialer{})
+
+	request := openAIWSAcquireRequest{
+		Account:                 &Account{ID: 902, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 10},
+		AccountConcurrencyLimit: 2,
+		WSURL:                   "wss://example.com/v1/responses",
+		ForceNewConn:            true,
+	}
+	first, err := pool.Acquire(context.Background(), request)
+	require.NoError(t, err)
+	t.Cleanup(first.Release)
+	second, err := pool.Acquire(context.Background(), request)
+	require.NoError(t, err)
+	t.Cleanup(second.Release)
+
+	_, err = pool.Acquire(context.Background(), request)
+	require.ErrorIs(t, err, errOpenAIWSConnQueueFull)
+}
+
 func TestOpenAIWSConnPool_EffectiveMaxConnsByAccount_ModeRouterV2RespectsHardCap(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
