@@ -12,9 +12,35 @@ import (
 	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetSharedReqClient_TLSProfileSeparatesCacheByContent(t *testing.T) {
+	sharedReqClients = sync.Map{}
+	first := reqClientOptions{Timeout: time.Second, TLSProfile: &tlsfingerprint.Profile{CipherSuites: []uint16{0x1301}}}
+	second := reqClientOptions{Timeout: time.Second, TLSProfile: &tlsfingerprint.Profile{CipherSuites: []uint16{0x1302}}}
+
+	firstClient, err := getSharedReqClient(first)
+	require.NoError(t, err)
+	secondClient, err := getSharedReqClient(second)
+	require.NoError(t, err)
+
+	require.NotSame(t, firstClient, secondClient)
+	require.NotEqual(t, buildReqClientKey(first), buildReqClientKey(second))
+}
+
+func TestCreateOpenAITLSProfileReqClientPreservesChromeImpersonation(t *testing.T) {
+	sharedReqClients = sync.Map{}
+	profile := &tlsfingerprint.Profile{Name: "account override", CipherSuites: []uint16{0x1301}}
+
+	client, err := CreateOpenAITLSProfileReqClient("", profile)
+	require.NoError(t, err)
+	require.NotNil(t, client.GetTransport().DialTLSContext)
+	require.NotEmpty(t, client.Headers.Get("Sec-Ch-Ua"))
+	require.NotEmpty(t, client.Headers.Get("User-Agent"))
+}
 
 func forceHTTPVersion(t *testing.T, client *req.Client) string {
 	t.Helper()
@@ -110,9 +136,9 @@ func TestGetSharedReqClient_ProxyURLMissingHost(t *testing.T) {
 	require.Contains(t, err.Error(), "proxy URL missing host")
 }
 
-func TestCreateOpenAIReqClient_Timeout120Seconds(t *testing.T) {
+func TestCreateOpenAIReqClientForContext_Timeout120Seconds(t *testing.T) {
 	sharedReqClients = sync.Map{}
-	client, err := createOpenAIReqClient("http://proxy.local:8080")
+	client, err := createOpenAIReqClientForContext(context.Background(), "http://proxy.local:8080")
 	require.NoError(t, err)
 	require.Equal(t, 120*time.Second, client.GetClient().Timeout)
 }

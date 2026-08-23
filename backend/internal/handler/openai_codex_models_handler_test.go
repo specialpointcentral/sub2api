@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -44,7 +45,6 @@ func (r codexModelsFailoverAccountRepo) ListSchedulableByPlatform(_ context.Cont
 }
 
 type codexModelsFailoverHTTPUpstream struct {
-	service.HTTPUpstream
 	mu          sync.Mutex
 	accountIDs  []int64
 	firstErr    error
@@ -92,6 +92,10 @@ func (u *codexModelsFailoverHTTPUpstream) Do(_ *http.Request, _ string, accountI
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-5.6-sol"}]}`)),
 	}, nil
+}
+
+func (u *codexModelsFailoverHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
 func (u *codexModelsFailoverHTTPUpstream) calls() []int64 {
