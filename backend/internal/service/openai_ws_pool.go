@@ -63,8 +63,12 @@ func (e *openAIWSDialError) Unwrap() error {
 
 type openAIWSAcquireRequest struct {
 	Account *Account
-	WSURL   string
-	Headers http.Header
+	// AccountConcurrencyLimit is an optional request-time upper bound derived
+	// from the traffic-shaping account-thread cap. Zero preserves the pool's
+	// legacy configuration-only capacity behavior.
+	AccountConcurrencyLimit int
+	WSURL                   string
+	Headers                 http.Header
 	// TLSProfile is part of the handshake compatibility key. A profile update
 	// must create a new upstream connection instead of reusing an older
 	// ClientHello from the same account pool.
@@ -836,7 +840,7 @@ func (p *openAIWSConnPool) runBackgroundCleanupSweep(now time.Time) {
 		maxConns := p.maxConnsHardCap()
 		ap.mu.Lock()
 		if ap.lastAcquire != nil && ap.lastAcquire.Account != nil {
-			maxConns = p.effectiveMaxConnsByAccount(ap.lastAcquire.Account)
+			maxConns = p.effectiveMaxConnsByAcquireRequest(ap.lastAcquire)
 		}
 		evicted := p.cleanupAccountLocked(ap, now, maxConns)
 		ap.lastCleanupAt = now
@@ -870,7 +874,7 @@ retryAcquire:
 	accountID := req.Account.ID
 	compatibility := normalizeOpenAIWSHandshakeCompatibility(req.Account, req.Headers, req.TLSProfile)
 	routingAffinity := normalizeOpenAIWSRoutingAffinity(req.Headers)
-	effectiveMaxConns := p.effectiveMaxConnsByAccount(req.Account)
+	effectiveMaxConns := p.effectiveMaxConnsByAcquireRequest(&req)
 	if effectiveMaxConns <= 0 {
 		return nil, errOpenAIWSConnQueueFull
 	}
@@ -1542,7 +1546,7 @@ func (p *openAIWSConnPool) ensureTargetIdleAsync(accountID int64) {
 	}
 	effectiveMaxConns := p.maxConnsHardCap()
 	if ap.lastAcquire != nil && ap.lastAcquire.Account != nil {
-		effectiveMaxConns = p.effectiveMaxConnsByAccount(ap.lastAcquire.Account)
+		effectiveMaxConns = p.effectiveMaxConnsByAcquireRequest(ap.lastAcquire)
 	}
 	target := p.targetConnCountLocked(ap, effectiveMaxConns)
 	current := len(ap.conns) + ap.creating
@@ -1661,7 +1665,7 @@ func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequ
 			conn.close()
 			continue
 		}
-		if len(ap.conns) >= p.effectiveMaxConnsByAccount(req.Account) {
+		if len(ap.conns) >= p.effectiveMaxConnsByAcquireRequest(&req) {
 			ap.signalChangedLocked()
 			ap.mu.Unlock()
 			conn.close()
@@ -1875,38 +1879,63 @@ func (p *openAIWSConnPool) maxConnsFactorByAccount(account *Account) float64 {
 }
 
 func (p *openAIWSConnPool) effectiveMaxConnsByAccount(account *Account) int {
+	return p.effectiveMaxConnsByAccountWithLimit(account, 0)
+}
+
+func (p *openAIWSConnPool) effectiveMaxConnsByAcquireRequest(req *openAIWSAcquireRequest) int {
+	if req == nil {
+		return p.effectiveMaxConnsByAccount(nil)
+	}
+	return p.effectiveMaxConnsByAccountWithLimit(req.Account, req.AccountConcurrencyLimit)
+}
+
+func (p *openAIWSConnPool) effectiveMaxConnsByAccountWithLimit(account *Account, accountConcurrencyLimit int) int {
 	hardCap := p.maxConnsHardCap()
 	if hardCap <= 0 {
 		return 0
 	}
+	applyAccountLimit := func(maxConns int) int {
+		if accountConcurrencyLimit > 0 && accountConcurrencyLimit < maxConns {
+			return accountConcurrencyLimit
+		}
+		return maxConns
+	}
 	if p.modeRouterV2Enabled() {
 		if account == nil {
-			return hardCap
+			return applyAccountLimit(hardCap)
 		}
-		if account.Concurrency <= 0 {
+		accountConcurrency := account.Concurrency
+		if accountConcurrencyLimit > 0 && (accountConcurrency <= 0 || accountConcurrencyLimit < accountConcurrency) {
+			accountConcurrency = accountConcurrencyLimit
+		}
+		if accountConcurrency <= 0 {
 			return 0
 		}
-		return min(account.Concurrency, hardCap)
+		return min(accountConcurrency, hardCap)
 	}
 	if account == nil || !p.dynamicMaxConnsEnabled() {
-		return hardCap
+		return applyAccountLimit(hardCap)
 	}
-	if account.Concurrency <= 0 {
+	accountConcurrency := account.Concurrency
+	if accountConcurrencyLimit > 0 && (accountConcurrency <= 0 || accountConcurrencyLimit < accountConcurrency) {
+		accountConcurrency = accountConcurrencyLimit
+	}
+	if accountConcurrency <= 0 {
 		// 0/-1 等“无限制”并发场景下，仍由全局硬上限兜底。
-		return hardCap
+		return applyAccountLimit(hardCap)
 	}
 	factor := p.maxConnsFactorByAccount(account)
 	if factor <= 0 {
 		factor = 1.0
 	}
-	effective := int(math.Ceil(float64(account.Concurrency) * factor))
+	effective := int(math.Ceil(float64(accountConcurrency) * factor))
 	if effective < 1 {
 		effective = 1
 	}
 	if effective > hardCap {
 		effective = hardCap
 	}
-	return effective
+	return applyAccountLimit(effective)
 }
 
 func (p *openAIWSConnPool) minIdlePerAccount() int {
@@ -1997,6 +2026,7 @@ func cloneOpenAIWSAcquireRequestPtr(req *openAIWSAcquireRequest) *openAIWSAcquir
 func sameOpenAIWSPrewarmTarget(a, b openAIWSAcquireRequest) bool {
 	return stringsTrim(a.WSURL) == stringsTrim(b.WSURL) &&
 		stringsTrim(a.ProxyURL) == stringsTrim(b.ProxyURL) &&
+		a.AccountConcurrencyLimit == b.AccountConcurrencyLimit &&
 		normalizeOpenAIWSHandshakeCompatibility(a.Account, a.Headers, a.TLSProfile) == normalizeOpenAIWSHandshakeCompatibility(b.Account, b.Headers, b.TLSProfile)
 }
 
