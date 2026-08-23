@@ -500,6 +500,24 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAICodexVersionStaggerMaxHours != after.OpenAICodexVersionStaggerMaxHours {
 		changed = append(changed, "openai_codex_version_stagger_max_hours")
 	}
+	if before.OpenAIRequestPacingEnabled != after.OpenAIRequestPacingEnabled {
+		changed = append(changed, "openai_request_pacing_enabled")
+	}
+	if before.OpenAIRequestPacingMinIntervalMS != after.OpenAIRequestPacingMinIntervalMS {
+		changed = append(changed, "openai_request_pacing_min_interval_ms")
+	}
+	if before.OpenAIRequestPacingMaxIntervalMS != after.OpenAIRequestPacingMaxIntervalMS {
+		changed = append(changed, "openai_request_pacing_max_interval_ms")
+	}
+	if before.OpenAIAccountThreadConcurrencyLimit != after.OpenAIAccountThreadConcurrencyLimit {
+		changed = append(changed, "openai_account_thread_concurrency_limit")
+	}
+	if before.OpenAIQuotaProbeIntervalMinutes != after.OpenAIQuotaProbeIntervalMinutes {
+		changed = append(changed, "openai_quota_probe_interval_minutes")
+	}
+	if before.OpenAIQuotaProbeJitterRatio != after.OpenAIQuotaProbeJitterRatio {
+		changed = append(changed, "openai_quota_probe_jitter_ratio")
+	}
 	if before.PaymentVisibleMethodAlipaySource != after.PaymentVisibleMethodAlipaySource {
 		changed = append(changed, "payment_visible_method_alipay_source")
 	}

@@ -73,6 +73,18 @@ type OpenAIWSIngressLeaseCache interface {
 	ReleaseOpenAIWSIngressLease(ctx context.Context, apiKeyID int64, leaseID string) error
 }
 
+// OpenAIRequestPacingCache atomically reserves an account-scoped OAuth turn
+// start. Implementations use a shared clock so independent gateway instances
+// observe one pacing queue.
+type OpenAIRequestPacingCache interface {
+	ReserveOpenAIOAuthStart(ctx context.Context, accountID int64, interval time.Duration, deadline time.Time, ownerToken string) (time.Duration, error)
+	RollbackOpenAIOAuthStart(ctx context.Context, accountID int64, ownerToken string) (bool, error)
+}
+
+type OpenAIQuotaProbeScheduleCache interface {
+	TryClaimOpenAIQuotaProbe(ctx context.Context, accountID int64, interval time.Duration, scheduleVersion string, initialNotBefore time.Time) (bool, error)
+}
+
 const (
 	openAIWSIngressLeaseTTL             = 60 * time.Second
 	openAIWSIngressLeaseRefreshInterval = 20 * time.Second
@@ -298,6 +310,39 @@ func NewConcurrencyService(cache ConcurrencyCache) *ConcurrencyService {
 	}
 	svc.SetAccountLoadBatchCacheTTL(defaultAccountLoadBatchCacheTTL)
 	return svc
+}
+
+func (s *ConcurrencyService) ReserveOpenAIOAuthStart(ctx context.Context, accountID int64, interval time.Duration, deadline time.Time, ownerToken string) (time.Duration, error) {
+	if s == nil || s.cache == nil || accountID <= 0 || interval < 0 || deadline.IsZero() || strings.TrimSpace(ownerToken) == "" {
+		return 0, errors.New("openai request pacing cache is unavailable")
+	}
+	cache, ok := s.cache.(OpenAIRequestPacingCache)
+	if !ok {
+		return 0, errors.New("openai request pacing cache is unsupported")
+	}
+	return cache.ReserveOpenAIOAuthStart(ctx, accountID, interval, deadline, ownerToken)
+}
+
+func (s *ConcurrencyService) RollbackOpenAIOAuthStart(ctx context.Context, accountID int64, ownerToken string) (bool, error) {
+	if s == nil || s.cache == nil || accountID <= 0 || strings.TrimSpace(ownerToken) == "" {
+		return false, errors.New("openai request pacing cache is unavailable")
+	}
+	cache, ok := s.cache.(OpenAIRequestPacingCache)
+	if !ok {
+		return false, errors.New("openai request pacing cache is unsupported")
+	}
+	return cache.RollbackOpenAIOAuthStart(ctx, accountID, ownerToken)
+}
+
+func (s *ConcurrencyService) TryClaimOpenAIQuotaProbe(ctx context.Context, accountID int64, interval time.Duration, scheduleVersion string, initialNotBefore time.Time) (bool, error) {
+	if s == nil || s.cache == nil || accountID <= 0 || interval <= 0 || strings.TrimSpace(scheduleVersion) == "" {
+		return false, errors.New("openai quota probe schedule cache is unavailable")
+	}
+	cache, ok := s.cache.(OpenAIQuotaProbeScheduleCache)
+	if !ok {
+		return false, errors.New("openai quota probe schedule cache is unsupported")
+	}
+	return cache.TryClaimOpenAIQuotaProbe(ctx, accountID, interval, scheduleVersion, initialNotBefore)
 }
 
 // AcquireOpenAIWSIngressLease atomically reserves one live ingress connection
