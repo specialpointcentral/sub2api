@@ -973,13 +973,14 @@
         </div>
       </div>
 
-      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <!-- Codex 指纹收敛模式（OpenAI OAuth / API Key） -->
+      <div v-if="allOpenAIFingerprintCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
           <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
           <input
             v-model="enableCodexFingerprintMode"
             type="checkbox"
+            data-testid="bulk-codex-fingerprint-mode-enabled"
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
@@ -988,6 +989,25 @@
             {{ t('admin.accounts.openai.codexFingerprintModeDesc') }}
           </p>
           <Select v-model="codexFingerprintMode" data-testid="bulk-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
+        </div>
+      </div>
+
+      <!-- 非 Codex 流量策略（OpenAI OAuth / API Key） -->
+      <div v-if="allOpenAINonCodexCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <label class="input-label mb-0">{{ t('admin.accounts.openai.nonCodexTrafficPolicy') }}</label>
+          <input
+            v-model="enableNonCodexTrafficPolicy"
+            type="checkbox"
+            data-testid="bulk-non-codex-traffic-policy-enabled"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div :class="!enableNonCodexTrafficPolicy && 'pointer-events-none opacity-50'">
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.openai.nonCodexTrafficPolicyDesc') }}
+          </p>
+          <Select v-model="nonCodexTrafficPolicy" data-testid="bulk-non-codex-traffic-policy-select" :options="nonCodexTrafficPolicyOptions" />
         </div>
       </div>
 
@@ -1571,6 +1591,24 @@ const allOpenAIOAuth = computed(() => {
   )
 })
 
+const allOpenAIFingerprintCapable = computed(() => {
+  return (
+    targetSelectedPlatforms.value.length === 1 &&
+    targetSelectedPlatforms.value[0] === 'openai' &&
+    targetSelectedTypes.value.length > 0 &&
+    targetSelectedTypes.value.every(t => t === 'oauth' || t === 'setup-token' || t === 'apikey')
+  )
+})
+
+const allOpenAINonCodexCapable = computed(() => {
+  return (
+    targetSelectedPlatforms.value.length === 1 &&
+    targetSelectedPlatforms.value[0] === 'openai' &&
+    targetSelectedTypes.value.length > 0 &&
+    targetSelectedTypes.value.every(t => t === 'oauth' || t === 'apikey')
+  )
+})
+
 // 严格 OAuth（不含 setup-token）：namespace 摊平兼容开关只对 OAuth 账号生效
 const allOpenAIOAuthOnly = computed(() => {
   return (
@@ -1713,6 +1751,13 @@ const codexFingerprintModeOptions = computed(() => [
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
   { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
   { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
+])
+type NonCodexTrafficPolicy = 'off' | 'pi'
+const enableNonCodexTrafficPolicy = ref(false)
+const nonCodexTrafficPolicy = ref<NonCodexTrafficPolicy>('off')
+const nonCodexTrafficPolicyOptions = computed(() => [
+  { value: 'off' as NonCodexTrafficPolicy, label: t('admin.accounts.openai.nonCodexTrafficOff') },
+  { value: 'pi' as NonCodexTrafficPolicy, label: t('admin.accounts.openai.nonCodexTrafficPi') },
 ])
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAICompactModelMappings = ref<ModelMapping[]>([])
@@ -2087,13 +2132,22 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.codex_cli_only_allow_app_server = codexCLIOnlyAppServerEnabled.value
   }
 
-  if (enableCodexFingerprintMode.value) {
+  if (enableCodexFingerprintMode.value && allOpenAIFingerprintCapable.value) {
     const extra = ensureExtra()
     // off = 默认值，清键即可；device/session/full 是显式 opt-in，必须落键（#5610）。
     if (codexFingerprintMode.value !== 'off') {
       extra.codex_fingerprint_mode = codexFingerprintMode.value
     } else {
       delete extra.codex_fingerprint_mode
+    }
+  }
+
+  if (enableNonCodexTrafficPolicy.value && allOpenAINonCodexCapable.value) {
+    const extra = ensureExtra()
+    if (nonCodexTrafficPolicy.value === 'pi') {
+      extra.non_codex_traffic_policy = 'pi'
+    } else {
+      delete extra.non_codex_traffic_policy
     }
   }
 
@@ -2211,6 +2265,7 @@ const handleSubmit = async () => {
     enableCodexCLIOnly.value ||
     enableCodexCLIOnlyAppServer.value ||
     enableCodexFingerprintMode.value ||
+    enableNonCodexTrafficPolicy.value ||
     enableOpenAICompactMode.value ||
     enableOpenAICompactModelMapping.value ||
     enableRpmLimit.value ||
@@ -2363,6 +2418,8 @@ watch(
       enableCodexCLIOnlyAppServer.value = false
       enableCodexFingerprintMode.value = false
       codexFingerprintMode.value = 'off'
+      enableNonCodexTrafficPolicy.value = false
+      nonCodexTrafficPolicy.value = 'off'
       enableOpenAICompactMode.value = false
       enableOpenAICompactModelMapping.value = false
       enableRpmLimit.value = false
