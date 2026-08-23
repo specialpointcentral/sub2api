@@ -399,6 +399,19 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		c.Set("openai_ws_http_bridge", true)
 	}
 
+	// Fingerprint convergence (device/session/full): bridge replay and failover turns get
+	// the same per-account identity treatment as the other outbound paths. Each invocation
+	// re-resolves against the current account, so retrying a turn on a replacement account
+	// derives that account's identity instead of leaking the previous one. Off mode stays
+	// a pure passthrough (no seed ensure, no client_metadata rewrite).
+	if account.GetCodexFingerprintMode() != codexFingerprintOff && shouldResolveCodexFingerprint(account) {
+		bridgedBody, _, fpErr := s.stageCodexFingerprintForRaw(c, account, body, true)
+		if fpErr != nil {
+			return nil, fmt.Errorf("stage ws http bridge codex fingerprint: %w", fpErr)
+		}
+		body = bridgedBody
+	}
+
 	turnStart := time.Now()
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	var resp *http.Response

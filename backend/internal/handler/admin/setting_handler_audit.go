@@ -488,6 +488,18 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAICodexVersionAutoSyncEnabled != after.OpenAICodexVersionAutoSyncEnabled {
 		changed = append(changed, "openai_codex_version_auto_sync_enabled")
 	}
+	if before.OpenAICodexDevicePoolSize != after.OpenAICodexDevicePoolSize {
+		changed = append(changed, "openai_codex_device_pool_size")
+	}
+	if before.OpenAICodexDevicePoolPlatformRatio != after.OpenAICodexDevicePoolPlatformRatio {
+		changed = append(changed, "openai_codex_device_pool_platform_ratio")
+	}
+	if before.OpenAICodexUAPersonaEnabled != after.OpenAICodexUAPersonaEnabled {
+		changed = append(changed, "openai_codex_ua_persona_enabled")
+	}
+	if before.OpenAICodexVersionStaggerMaxHours != after.OpenAICodexVersionStaggerMaxHours {
+		changed = append(changed, "openai_codex_version_stagger_max_hours")
+	}
 	if before.PaymentVisibleMethodAlipaySource != after.PaymentVisibleMethodAlipaySource {
 		changed = append(changed, "payment_visible_method_alipay_source")
 	}
