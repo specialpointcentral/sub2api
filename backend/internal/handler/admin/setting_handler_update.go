@@ -20,6 +20,21 @@ import (
 	"github.com/gin-gonic/gin/binding"
 )
 
+func validateCodexRectifierSettings(devicePoolSize *int, platformRatio *string, versionStaggerMaxHours *int) error {
+	if devicePoolSize != nil && (*devicePoolSize != 1 && (*devicePoolSize < 3 || *devicePoolSize > 8)) {
+		return errors.New("openai_codex_device_pool_size must be 1 or between 3 and 8")
+	}
+	if platformRatio != nil {
+		if _, ok := service.NormalizeCodexDevicePlatformRatio(*platformRatio); !ok {
+			return errors.New("openai_codex_device_pool_platform_ratio must be three integers from 1 to 1000000 in mac:windows:linux order")
+		}
+	}
+	if versionStaggerMaxHours != nil && (*versionStaggerMaxHours < 0 || *versionStaggerMaxHours > 48) {
+		return errors.New("openai_codex_version_stagger_max_hours must be between 0 and 48")
+	}
+	return nil
+}
+
 // UpdateSettingsRequest 更新设置请求
 type UpdateSettingsRequest struct {
 	// 注册设置
@@ -256,6 +271,10 @@ type UpdateSettingsRequest struct {
 	OpenAICodexUserAgent                   *string `json:"openai_codex_user_agent"`
 	OpenAICodexClientVersion               *string `json:"openai_codex_client_version"`
 	OpenAICodexVersionAutoSyncEnabled      *bool   `json:"openai_codex_version_auto_sync_enabled"`
+	OpenAICodexDevicePoolSize              *int    `json:"openai_codex_device_pool_size"`
+	OpenAICodexDevicePoolPlatformRatio     *string `json:"openai_codex_device_pool_platform_ratio"`
+	OpenAICodexUAPersonaEnabled            *bool   `json:"openai_codex_ua_persona_enabled"`
+	OpenAICodexVersionStaggerMaxHours      *int    `json:"openai_codex_version_stagger_max_hours"`
 
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
@@ -1451,6 +1470,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}
 		req.OpenAICodexClientVersion = &normalized
 	}
+	if err := validateCodexRectifierSettings(req.OpenAICodexDevicePoolSize, req.OpenAICodexDevicePoolPlatformRatio, req.OpenAICodexVersionStaggerMaxHours); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// codex_cli_only 加固：最低/最高 Codex 版本（空=禁用，或合法 semver；max>=min）
 	if req.MinCodexVersion != "" && !semverPattern.MatchString(req.MinCodexVersion) {
@@ -1763,6 +1786,31 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.OpenAICodexVersionAutoSyncEnabled
 			}
 			return previousSettings.OpenAICodexVersionAutoSyncEnabled
+		}(),
+		OpenAICodexDevicePoolSize: func() int {
+			if req.OpenAICodexDevicePoolSize != nil {
+				return *req.OpenAICodexDevicePoolSize
+			}
+			return previousSettings.OpenAICodexDevicePoolSize
+		}(),
+		OpenAICodexDevicePoolPlatformRatio: func() string {
+			if req.OpenAICodexDevicePoolPlatformRatio != nil {
+				ratio, _ := service.NormalizeCodexDevicePlatformRatio(*req.OpenAICodexDevicePoolPlatformRatio)
+				return ratio
+			}
+			return previousSettings.OpenAICodexDevicePoolPlatformRatio
+		}(),
+		OpenAICodexUAPersonaEnabled: func() bool {
+			if req.OpenAICodexUAPersonaEnabled != nil {
+				return *req.OpenAICodexUAPersonaEnabled
+			}
+			return previousSettings.OpenAICodexUAPersonaEnabled
+		}(),
+		OpenAICodexVersionStaggerMaxHours: func() int {
+			if req.OpenAICodexVersionStaggerMaxHours != nil {
+				return *req.OpenAICodexVersionStaggerMaxHours
+			}
+			return previousSettings.OpenAICodexVersionStaggerMaxHours
 		}(),
 		MinCodexVersion:       strings.TrimSpace(req.MinCodexVersion),
 		MaxCodexVersion:       strings.TrimSpace(req.MaxCodexVersion),
@@ -2294,6 +2342,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexClientVersion:                               updatedSettings.OpenAICodexClientVersion,
 		OpenAICodexClientVersionSynced:                         updatedSettings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      updatedSettings.OpenAICodexVersionAutoSyncEnabled,
+		OpenAICodexDevicePoolSize:                              updatedSettings.OpenAICodexDevicePoolSize,
+		OpenAICodexDevicePoolPlatformRatio:                     updatedSettings.OpenAICodexDevicePoolPlatformRatio,
+		OpenAICodexUAPersonaEnabled:                            updatedSettings.OpenAICodexUAPersonaEnabled,
+		OpenAICodexVersionStaggerMaxHours:                      updatedSettings.OpenAICodexVersionStaggerMaxHours,
 		MinCodexVersion:                                        updatedSettings.MinCodexVersion,
 		MaxCodexVersion:                                        updatedSettings.MaxCodexVersion,
 		CodexCLIOnlyBlacklist:                                  updatedSettings.CodexCLIOnlyBlacklist,

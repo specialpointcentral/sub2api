@@ -475,6 +475,10 @@ const baseSettingsResponse = {
   enable_client_dateline_normalization: true,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  openai_codex_device_pool_size: 1,
+  openai_codex_device_pool_platform_ratio: "1:1:2",
+  openai_codex_ua_persona_enabled: false,
+  openai_codex_version_stagger_max_hours: 0,
   payment_enabled: true,
   payment_min_amount: 1,
   payment_max_amount: 10000,
@@ -1187,6 +1191,117 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         antigravity_user_agent_version: "1.23.2",
+      }),
+    );
+  });
+
+  it("renders and submits Codex rectifier settings", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_codex_device_pool_size: 8,
+      openai_codex_device_pool_platform_ratio: "2:3:5",
+      openai_codex_ua_persona_enabled: true,
+      openai_codex_version_stagger_max_hours: 36,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const poolSize = wrapper.get('[data-testid="codex-device-pool-size"]');
+    expect(poolSize.element.tagName).toBe("SELECT");
+    expect(poolSize.findAll("option").map((option) => option.attributes("value"))).toEqual([
+      "1",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+    ]);
+    expect(wrapper.find('[data-testid="codex-device-pool-platform-ratio"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="codex-ua-persona-enabled"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="codex-version-stagger-max-hours"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="codex-device-pool-migration-warning"]').exists()).toBe(true);
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_codex_device_pool_size: 8,
+        openai_codex_device_pool_platform_ratio: "2:3:5",
+        openai_codex_ua_persona_enabled: true,
+        openai_codex_version_stagger_max_hours: 36,
+      }),
+    );
+  });
+
+  it("documents the incompatible Codex pool migration contract in both locales", () => {
+    const enWarning = enSettings.settings.gatewayForwarding.codexDevicePoolMigrationWarning;
+    const zhWarning = zhSettings.settings.gatewayForwarding.codexDevicePoolMigrationWarning;
+
+    expect(enWarning).toContain("every user identity");
+    expect(enWarning).toContain("slot 0");
+    expect(enWarning).toContain("RootSession");
+    expect(zhWarning).toContain("全部用户身份");
+    expect(zhWarning).toContain("slot 0");
+    expect(zhWarning).toContain("RootSession");
+  });
+
+  it("rejects a Codex device pool size above eight before submitting", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    await wrapper.get('[data-testid="codex-device-pool-size"]').setValue("9");
+    updateSettings.mockClear();
+    showError.mockClear();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(showError).toHaveBeenCalledWith(
+      "admin.settings.gatewayForwarding.codexDevicePoolSizeError",
+    );
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it.each(["1:-1:2", "1:1.5:2", "mac:1:2", "1000001:1:1"])(
+    "rejects invalid Codex platform ratio %s before submitting",
+    async (ratio) => {
+      const wrapper = mountView();
+      await flushPromises();
+      await openGatewayTab(wrapper);
+
+      await wrapper.get('[data-testid="codex-device-pool-platform-ratio"]').setValue(ratio);
+      updateSettings.mockClear();
+      showError.mockClear();
+      await wrapper.find("form").trigger("submit.prevent");
+      await flushPromises();
+
+      expect(showError).toHaveBeenCalledWith(
+        "admin.settings.gatewayForwarding.codexDevicePoolPlatformRatioError",
+      );
+      expect(updateSettings).not.toHaveBeenCalled();
+      wrapper.unmount();
+    },
+  );
+
+  it("canonicalizes a trimmed Codex platform ratio before submitting", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    await wrapper
+      .get('[data-testid="codex-device-pool-platform-ratio"]')
+      .setValue(" 2 : 3 : 5 ");
+    updateSettings.mockClear();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_codex_device_pool_platform_ratio: "2:3:5",
       }),
     );
   });
