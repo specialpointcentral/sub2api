@@ -83,6 +83,7 @@ type openAIWSAcquireRequest struct {
 
 type openAIWSHandshakeCompatibilityKey struct {
 	tlsProfileID        string
+	userAgent           string
 	betaFeatures        string
 	codexInstallationID string
 	sessionIDHyphen     string
@@ -2026,6 +2027,7 @@ func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
 
 func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Header, profile *tlsfingerprint.Profile) openAIWSHandshakeCompatibilityKey {
 	key := openAIWSHandshakeCompatibilityKey{
+		userAgent:    normalizeOpenAIWSStableIdentityHeader(headers, "user-agent"),
 		betaFeatures: normalizeOpenAIWSBetaFeatures(headers),
 	}
 	if profile != nil {

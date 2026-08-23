@@ -702,6 +702,7 @@ func activeCodexFingerprintPoolAccountForTest(id int64) *Account {
 
 func stableOpenAIWSIdentityHeadersForTest() http.Header {
 	headers := make(http.Header)
+	headers.Set("User-Agent", "codex-tui/0.149.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.149.0)")
 	headers.Set("X-Codex-Beta-Features", "remote_compaction_v2,responses_websockets_v2")
 	headers.Set("X-Codex-Installation-ID", "install-a")
 	headers.Set("session-id", "session-hyphen-a")
@@ -763,6 +764,7 @@ func TestOpenAIWSConnPool_AcquireDoesNotReuseDifferentStableIdentity(t *testing.
 		{name: "thread", header: "thread-id", value: "thread-b"},
 		{name: "client request", header: "x-client-request-id", value: "client-request-b"},
 		{name: "window", header: "x-codex-window-id", value: "window-b"},
+		{name: "outbound OS identity", header: "user-agent", value: "codex-tui/0.149.0 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.149.0)"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{}
