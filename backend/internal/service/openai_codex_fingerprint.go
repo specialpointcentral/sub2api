@@ -224,6 +224,24 @@ func deriveStableUUIDv4(seed string) string {
 		b[10:16])
 }
 
+// deriveStableUUIDv7 从种子确定性派生一个 UUIDv7 形态的字符串。
+// 前 48 位使用种子摘要作为稳定的类时间戳位；其余位保留摘要熵并设置
+// RFC 9562 要求的 version 7 / RFC 4122 variant 位。同一种子跨重启不变。
+// 从旧 UUIDv4 派生切换到 UUIDv7 会造成一次性、有意的 session/thread ID
+// 旋转；此后固定种子仍保持固定输出。
+func deriveStableUUIDv7(seed string) string {
+	h := sha256.Sum256([]byte(seed))
+	b := h[:16]
+	b[6] = (b[6] & 0x0f) | 0x70 // version 7
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 1
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		binary.BigEndian.Uint32(b[0:4]),
+		binary.BigEndian.Uint16(b[4:6]),
+		binary.BigEndian.Uint16(b[6:8]),
+		binary.BigEndian.Uint16(b[8:10]),
+		b[10:16])
+}
+
 // resolveConvergedInstallationID 返回账号级恒定的 installation_id。
 // 优先使用管理员配置的真实 device_id，无则从系统管理的账号随机种子确定性派生。
 func resolveConvergedInstallationID(account *Account, seed string) string {
@@ -244,7 +262,7 @@ func resolveConvergedSessionID(seed string) string {
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-session-id:v2:" + seed)
+	return deriveStableUUIDv7("sub2api:codex-session-id:v2:" + seed)
 }
 
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
@@ -254,7 +272,7 @@ func resolveConvergedThreadID(seed, clientSessionID string) string {
 	if seed == "" || clientSessionID == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-thread-id:v2:" + seed + ":" + clientSessionID)
+	return deriveStableUUIDv7("sub2api:codex-thread-id:v2:" + seed + ":" + clientSessionID)
 }
 
 // codexFingerprintIDs 收敛后的完整 ID 集合。
@@ -270,6 +288,7 @@ type codexFingerprintIDs struct {
 	turnID                        string
 	windowID                      string
 	turnStartedAtUnixMs           int64
+	sandbox                       string
 	originalBodySessionID         string
 	originalBodySessionIDCaptured bool
 }
@@ -363,9 +382,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	h.Set("x-codex-installation-id", ids.installationID)
 
 	if ids.mode == codexFingerprintDevice {
-		rewriteCodexTurnMetadataFields(h, map[string]any{
-			"installation_id": ids.installationID,
-		})
+		rewriteCodexTurnMetadataFields(h, codexFingerprintTurnMetadataFields(ids))
 		return
 	}
 
@@ -377,14 +394,26 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	h.Set("session_id", ids.sessionID)
 	h.Set("thread-id", ids.threadID)
 
-	rewriteCodexTurnMetadataFields(h, map[string]any{
-		"installation_id":         ids.installationID,
-		"session_id":              ids.sessionID,
-		"thread_id":               ids.threadID,
-		"turn_id":                 ids.turnID,
-		"window_id":               ids.windowID,
-		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
-	})
+	rewriteCodexTurnMetadataFields(h, codexFingerprintTurnMetadataFields(ids))
+}
+
+func codexFingerprintTurnMetadataFields(ids *codexFingerprintIDs) map[string]any {
+	if ids == nil {
+		return nil
+	}
+	fields := map[string]any{"installation_id": ids.installationID}
+	if ids.sandbox != "" {
+		fields["sandbox"] = ids.sandbox
+	}
+	if ids.mode == codexFingerprintDevice {
+		return fields
+	}
+	fields["session_id"] = ids.sessionID
+	fields["thread_id"] = ids.threadID
+	fields["turn_id"] = ids.turnID
+	fields["window_id"] = ids.windowID
+	fields["turn_started_at_unix_ms"] = ids.turnStartedAtUnixMs
+	return fields
 }
 
 // rewriteCodexTurnMetadataFields 解析 x-codex-turn-metadata 头中的 JSON，
@@ -398,6 +427,9 @@ func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	var metadata map[string]any
 	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
 		metadata = make(map[string]any, len(fields))
+	}
+	if turnID, ok := fields["turn_id"].(string); ok {
+		rewriteLinkedCodexRootTurnID(metadata, turnID)
 	}
 	for k, v := range fields {
 		metadata[k] = v
@@ -449,26 +481,18 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	}
 
 	if ids.mode == codexFingerprintDevice {
-		rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
-			"installation_id": ids.installationID,
-		})
+		rewriteClientMetadataEmbeddedTurnMetadata(existing, codexFingerprintTurnMetadataFields(ids))
 		return modified
 	}
 
 	// session / full 模式
+	rewriteLinkedCodexRootTurnID(existing, ids.turnID)
 	existing["session_id"] = ids.sessionID
 	existing["thread_id"] = ids.threadID
 	existing["turn_id"] = ids.turnID
 	existing["x-codex-window-id"] = ids.windowID
 
-	rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
-		"installation_id":         ids.installationID,
-		"session_id":              ids.sessionID,
-		"thread_id":               ids.threadID,
-		"turn_id":                 ids.turnID,
-		"window_id":               ids.windowID,
-		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
-	})
+	rewriteClientMetadataEmbeddedTurnMetadata(existing, codexFingerprintTurnMetadataFields(ids))
 	return true
 }
 
@@ -592,10 +616,27 @@ func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fi
 	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
 		metadata = make(map[string]any, len(fields))
 	}
+	if turnID, ok := fields["turn_id"].(string); ok {
+		rewriteLinkedCodexRootTurnID(metadata, turnID)
+	}
 	for k, v := range fields {
 		metadata[k] = v
 	}
 	if rebuilt, err := json.Marshal(metadata); err == nil {
 		clientMetadata["x-codex-turn-metadata"] = string(rebuilt)
+	}
+}
+
+// rewriteLinkedCodexRootTurnID 保持真实 Codex 的根 turn 不变量：根 turn 的
+// root_turn_id 与 turn_id 相同，因此 turn_id 被收敛时二者必须联动；子代理 turn
+// 的 root_turn_id 指向祖先 turn，与自身 turn_id 不同，必须原样保留。
+func rewriteLinkedCodexRootTurnID(metadata map[string]any, nextTurnID string) {
+	if metadata == nil || nextTurnID == "" {
+		return
+	}
+	turnID, turnOK := metadata["turn_id"].(string)
+	rootTurnID, rootOK := metadata["root_turn_id"].(string)
+	if turnOK && rootOK && rootTurnID == turnID {
+		metadata["root_turn_id"] = nextTurnID
 	}
 }
