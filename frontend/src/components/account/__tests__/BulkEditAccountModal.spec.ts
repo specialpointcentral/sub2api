@@ -426,6 +426,56 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('OpenAI API Key 批量编辑可提交 Codex 指纹收敛模式', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey']
+    })
+
+    await wrapper.get('[data-testid="bulk-codex-fingerprint-mode-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-fingerprint-mode-select"]').setValue('full')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { codex_fingerprint_mode: 'full' }
+    })
+  })
+
+  it('OpenAI OAuth/API Key 批量编辑可提交账号级 non-Codex pi 策略', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['oauth', 'apikey']
+    })
+
+    await wrapper.get('[data-testid="bulk-non-codex-traffic-policy-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="bulk-non-codex-traffic-policy-select"]').setValue('pi')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { non_codex_traffic_policy: 'pi' }
+    })
+  })
+
+  it('OpenAI OAuth/API Key 批量关闭 non-Codex 策略时不提交账号级键', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['oauth', 'apikey']
+    })
+
+    await wrapper.get('[data-testid="bulk-non-codex-traffic-policy-enabled"]').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {}
+    })
+  })
+
   it('OpenAI 支持类型展示长上下文设置，混合平台隐藏全部新增设置', () => {
     for (const selectedTypes of [['oauth'], ['setup-token'], ['apikey'], ['oauth', 'setup-token', 'apikey']]) {
       const wrapper = mountModal({
