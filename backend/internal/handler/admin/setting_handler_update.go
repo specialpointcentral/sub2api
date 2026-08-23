@@ -275,7 +275,6 @@ type UpdateSettingsRequest struct {
 	OpenAICodexDevicePoolPlatformRatio     *string `json:"openai_codex_device_pool_platform_ratio"`
 	OpenAICodexUAPersonaEnabled            *bool   `json:"openai_codex_ua_persona_enabled"`
 	OpenAICodexVersionStaggerMaxHours      *int    `json:"openai_codex_version_stagger_max_hours"`
-
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
 	MaxCodexVersion                      string `json:"max_codex_version"`
@@ -1474,7 +1473,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-
 	// codex_cli_only 加固：最低/最高 Codex 版本（空=禁用，或合法 semver；max>=min）
 	if req.MinCodexVersion != "" && !semverPattern.MatchString(req.MinCodexVersion) {
 		response.Error(c, http.StatusBadRequest, "min_codex_version must be empty or a valid semver (e.g. 0.141.0)")
