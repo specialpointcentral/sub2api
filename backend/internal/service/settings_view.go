@@ -243,6 +243,10 @@ type SystemSettings struct {
 	OpenAICodexClientVersion               string // 出站声明的 Codex 客户端版本号（管理员覆写）；空值跟随自动同步值
 	OpenAICodexClientVersionSynced         string // 自动同步到的官方最新稳定版版本号（只读展示）
 	OpenAICodexVersionAutoSyncEnabled      bool   // 是否启用 Codex 客户端版本号自动同步（默认 true）
+	OpenAICodexDevicePoolSize              int    // 平台配额设备池大小（1 或 3-8，默认 1）
+	OpenAICodexDevicePoolPlatformRatio     string // mac:windows:linux 平台配额权重（默认 1:1:2）
+	OpenAICodexUAPersonaEnabled            bool   // 是否按稳定设备身份派生 UA persona（默认 false）
+	OpenAICodexVersionStaggerMaxHours      int    // 自动同步版本的最大错峰窗口（0-48h，默认 0）
 	MinCodexVersion                        string // codex_cli_only 最低 Codex 引擎版本；空=不检查
 	MaxCodexVersion                        string // codex_cli_only 最高 Codex 引擎版本；空=不检查
 	CodexCLIOnlyBlacklist                  string // codex_cli_only 全局黑名单 JSON（[]AllowedClientEntry，OR deny）

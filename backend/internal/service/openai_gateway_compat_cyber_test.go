@@ -16,7 +16,7 @@ import (
 
 // compatCyberOAuthAccount 是 compat cyber 测试共用的 OAuth 账号。
 func compatCyberOAuthAccount() *Account {
-	return &Account{
+	return withTestCodexFingerprintSeed(&Account{
 		ID:          1,
 		Name:        "openai-oauth",
 		Platform:    PlatformOpenAI,
@@ -26,7 +26,7 @@ func compatCyberOAuthAccount() *Account {
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
-	}
+	})
 }
 
 // compatCyberUpstreamSSE 构造上游 responses SSE：response.created 后 response.failed(cyber_policy)。

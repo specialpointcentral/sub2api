@@ -164,7 +164,7 @@ func TestForwardAsAnthropic_UsesExactFableMessagesDispatchModel(t *testing.T) {
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.6-sol")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.6-sol")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "claude-fable-5", result.Model)
@@ -216,7 +216,7 @@ func TestForwardAsAnthropic_NormalizesRoutingAndEffortForGpt54XHigh(t *testing.T
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "gpt-5.4-xhigh", result.Model)
@@ -301,7 +301,7 @@ func TestForwardAsAnthropic_PreservesMaxForFinalGPT56ResponsesModel(t *testing.T
 				cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
 			}
 
-			result, err := svc.ForwardAsAnthropic(context.Background(), c, tt.account, []byte(body), "", tt.defaultMapped)
+			result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(tt.account), []byte(body), "", tt.defaultMapped)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, tt.wantModel, result.UpstreamModel)
@@ -330,7 +330,7 @@ func rawGPT56ResponsesAPIKeyAccount(requestedModel, mappedModel string) *Account
 }
 
 func rawGPT56ResponsesOAuthAccount(requestedModel, mappedModel string) *Account {
-	return &Account{
+	return withTestCodexFingerprintSeed(&Account{
 		ID:          502,
 		Name:        "gpt56-oauth",
 		Platform:    PlatformOpenAI,
@@ -341,7 +341,7 @@ func rawGPT56ResponsesOAuthAccount(requestedModel, mappedModel string) *Account 
 			"chatgpt_account_id": "chatgpt-acc",
 			"model_mapping":      map[string]any{requestedModel: mappedModel},
 		},
-	}
+	})
 }
 
 func TestForwardAsAnthropic_MappedClaudeModelAcceptsChatUsageShape(t *testing.T) {
@@ -389,7 +389,7 @@ func TestForwardAsAnthropic_MappedClaudeModelAcceptsChatUsageShape(t *testing.T)
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.5")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "claude-opus-4-7", result.Model)
@@ -439,7 +439,7 @@ func TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch(t *te
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "stable-cache-key", "gpt-5.3-codex")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "stable-cache-key", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "stable-cache-key", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
@@ -485,7 +485,7 @@ func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSe
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.3-codex")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	cacheKey := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
@@ -592,7 +592,7 @@ func TestForwardAsAnthropic_DoesNotAutoDerivePromptCacheKeyForNonCodexModel(t *t
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-4o")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
@@ -645,7 +645,7 @@ func TestForwardAsAnthropic_TrimsFullReplayOnlyForCodexCompatModels(t *testing.T
 			},
 		}
 
-		result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", mappedModel)
+		result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", mappedModel)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		return upstream.lastBody
@@ -695,7 +695,7 @@ func TestForwardAsAnthropic_OAuthCompatKeepsFullReplayForCacheGrowth(t *testing.
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.4")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, int64(openAICompatAnthropicReplayMaxTailMessages+4), gjson.GetBytes(upstream.lastBody, "input.#").Int())
@@ -734,7 +734,7 @@ func TestForwardAsAnthropic_AttachesPreviousResponseIDForCompatContinuation(t *t
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(firstBody))
 	firstCtx.Request.Header.Set("Content-Type", "application/json")
 
-	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, account, firstBody, "stable-cache-key", "gpt-5.3-codex")
+	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, withTestCodexFingerprintSeed(account), firstBody, "stable-cache-key", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, firstResult)
 	require.Equal(t, "resp_first", firstResult.ResponseID)
@@ -747,7 +747,7 @@ func TestForwardAsAnthropic_AttachesPreviousResponseIDForCompatContinuation(t *t
 	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	secondCtx.Request.Header.Set("Content-Type", "application/json")
 
-	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, account, secondBody, "stable-cache-key", "gpt-5.3-codex")
+	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, withTestCodexFingerprintSeed(account), secondBody, "stable-cache-key", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, secondResult)
 	require.Equal(t, "resp_second", secondResult.ResponseID)
@@ -786,7 +786,7 @@ func TestForwardAsAnthropic_PreviousResponseIDKeepsMultiToolCallContext(t *testi
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(firstBody))
 	firstCtx.Request.Header.Set("Content-Type", "application/json")
 
-	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, account, firstBody, "stable-cache-key", "gpt-5.3-codex")
+	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, withTestCodexFingerprintSeed(account), firstBody, "stable-cache-key", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, firstResult)
 
@@ -797,7 +797,7 @@ func TestForwardAsAnthropic_PreviousResponseIDKeepsMultiToolCallContext(t *testi
 	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	secondCtx.Request.Header.Set("Content-Type", "application/json")
 
-	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, account, secondBody, "stable-cache-key", "gpt-5.3-codex")
+	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, withTestCodexFingerprintSeed(account), secondBody, "stable-cache-key", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, secondResult)
 	require.Equal(t, "resp_first_tools", gjson.GetBytes(upstream.lastBody, "previous_response_id").String())
@@ -850,7 +850,7 @@ func TestForwardAsAnthropic_ReplaysFullToolHistoryWhenPreviousResponseUnavailabl
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, secondBody, "stable-cache-key", "gpt-5.3-codex")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), secondBody, "stable-cache-key", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "resp_replayed", result.ResponseID)
@@ -945,7 +945,7 @@ func TestForwardAsAnthropic_DisablesAPIKeyContinuationWhenUpstreamRequiresWebSoc
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "stable-cache-key", "gpt-5.5")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "stable-cache-key", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "resp_replayed", result.ResponseID)
@@ -958,7 +958,7 @@ func TestForwardAsAnthropic_DisablesAPIKeyContinuationWhenUpstreamRequiresWebSoc
 	laterCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	laterCtx.Request.Header.Set("Content-Type", "application/json")
 
-	laterResult, err := svc.ForwardAsAnthropic(context.Background(), laterCtx, account, body, "stable-cache-key", "gpt-5.5")
+	laterResult, err := svc.ForwardAsAnthropic(context.Background(), laterCtx, withTestCodexFingerprintSeed(account), body, "stable-cache-key", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, laterResult)
 	require.Equal(t, "resp_later", laterResult.ResponseID)
@@ -1004,7 +1004,7 @@ func TestForwardAsAnthropic_APIKeyMetadataSessionSurvivesChangingCacheControlAnc
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(firstBody))
 	firstCtx.Request.Header.Set("Content-Type", "application/json")
 
-	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, account, firstBody, "", "gpt-5.4-mini")
+	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, withTestCodexFingerprintSeed(account), firstBody, "", "gpt-5.4-mini")
 	require.NoError(t, err)
 	require.NotNil(t, firstResult)
 	firstKey := gjson.GetBytes(upstream.bodies[0], "prompt_cache_key").String()
@@ -1018,7 +1018,7 @@ func TestForwardAsAnthropic_APIKeyMetadataSessionSurvivesChangingCacheControlAnc
 	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	secondCtx.Request.Header.Set("Content-Type", "application/json")
 
-	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, account, secondBody, "", "gpt-5.4-mini")
+	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, withTestCodexFingerprintSeed(account), secondBody, "", "gpt-5.4-mini")
 	require.NoError(t, err)
 	require.NotNil(t, secondResult)
 	require.Len(t, upstream.requests, 2)
@@ -1059,7 +1059,7 @@ func TestForwardAsAnthropic_DoesNotAttachPreviousResponseIDForOAuthCompat(t *tes
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "stable-cache-key", "gpt-5.4")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "stable-cache-key", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "previous_response_id").Exists())
@@ -1097,7 +1097,7 @@ func TestForwardAsAnthropic_ReusesOAuthCodexTurnState(t *testing.T) {
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(firstBody))
 	firstCtx.Request.Header.Set("Content-Type", "application/json")
 
-	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, account, firstBody, "stable-cache-key", "gpt-5.4")
+	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, withTestCodexFingerprintSeed(account), firstBody, "stable-cache-key", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, firstResult)
 	require.Empty(t, upstream.requests[0].Header.Get("x-codex-turn-state"))
@@ -1109,11 +1109,13 @@ func TestForwardAsAnthropic_ReusesOAuthCodexTurnState(t *testing.T) {
 	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	secondCtx.Request.Header.Set("Content-Type", "application/json")
 
-	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, account, secondBody, "stable-cache-key", "gpt-5.4")
+	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, withTestCodexFingerprintSeed(account), secondBody, "stable-cache-key", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, secondResult)
 	require.Equal(t, "turn_state_first", upstream.requests[1].Header.Get("x-codex-turn-state"))
-	require.Equal(t, generateSessionUUID(isolateOpenAIUpstreamSessionID(0, account, "stable-cache-key")), upstream.requests[1].Header.Get("session_id"))
+	// Independently derived from SHA-256("11111111-1111-4111-8111-111111111111:stable-cache-key")
+	// after setting UUIDv7/RFC4122 bits; the OAuth fixture must use its namespaced session.
+	require.Equal(t, "d22923c3-aea5-7a36-84bd-55add7cd42ea", upstream.requests[1].Header.Get("session_id"))
 	require.Empty(t, upstream.requests[1].Header.Get("conversation_id"))
 	requireOpenAIMessagesCodexIdentity(t, upstream.requests[1], codexCLIUserAgent, openai.CodexDefaultOriginator)
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "prompt_cache_key").Exists())
@@ -1163,12 +1165,60 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 				},
 			}
 
-			result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.4")
+			result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.4")
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			requireOpenAIMessagesCodexIdentity(t, upstream.lastReq, codexCLIUserAgent, openai.CodexDefaultOriginator)
 		})
 	}
+}
+
+func TestForwardAsAnthropic_OAuthMessagesBridgeKeepsFrozenPersonaIdentityConsistent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "codex-tui/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.146.0)")
+	c.Request.Header.Set("x-codex-turn-metadata", `{"sandbox":"seccomp"}`)
+
+	upstream := &httpUpstreamRecorder{resp: openAICompatSSECompletedResponse("resp_persona", "gpt-5.4")}
+	settingService := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAICodexUAPersonaEnabled: "true",
+	}}, &config.Config{})
+	svc := &OpenAIGatewayService{
+		httpUpstream:   upstream,
+		settingService: settingService,
+		cfg:            &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-oauth-persona",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: "session",
+			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+			codexUAPersonaExtraKey: map[string]any{
+				"platform": "mac",
+				"sandbox":  "seatbelt",
+			},
+		},
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "stable-cache-key", "gpt-5.4")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, upstream.lastReq.Header.Get("User-Agent"), "(Mac OS X 15.6.1; arm64)")
+	require.Equal(t, "seatbelt", stagedCodexFingerprintIDs(c, account).sandbox)
 }
 
 func TestForwardAsAnthropic_OAuthDigestFallbackReusesTurnStateWithoutExplicitKey(t *testing.T) {
@@ -1203,7 +1253,7 @@ func TestForwardAsAnthropic_OAuthDigestFallbackReusesTurnStateWithoutExplicitKey
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(firstBody))
 	firstCtx.Request.Header.Set("Content-Type", "application/json")
 
-	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, account, firstBody, "", "gpt-5.4")
+	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, withTestCodexFingerprintSeed(account), firstBody, "", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, firstResult)
 	firstSessionID := upstream.requests[0].Header.Get("session_id")
@@ -1218,7 +1268,7 @@ func TestForwardAsAnthropic_OAuthDigestFallbackReusesTurnStateWithoutExplicitKey
 	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	secondCtx.Request.Header.Set("Content-Type", "application/json")
 
-	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, account, secondBody, "", "gpt-5.4")
+	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, withTestCodexFingerprintSeed(account), secondBody, "", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, secondResult)
 	require.Equal(t, firstSessionID, upstream.requests[1].Header.Get("session_id"))
@@ -1262,7 +1312,7 @@ func TestForwardAsAnthropic_OAuthMetadataSessionSurvivesDigestPrefixRewrite(t *t
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(firstBody))
 	firstCtx.Request.Header.Set("Content-Type", "application/json")
 
-	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, account, firstBody, "", "gpt-5.5")
+	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, withTestCodexFingerprintSeed(account), firstBody, "", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, firstResult)
 	firstSessionID := upstream.requests[0].Header.Get("session_id")
@@ -1276,7 +1326,7 @@ func TestForwardAsAnthropic_OAuthMetadataSessionSurvivesDigestPrefixRewrite(t *t
 	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	secondCtx.Request.Header.Set("Content-Type", "application/json")
 
-	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, account, secondBody, "", "gpt-5.5")
+	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, withTestCodexFingerprintSeed(account), secondBody, "", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, secondResult)
 	require.Equal(t, firstSessionID, upstream.requests[1].Header.Get("session_id"))
@@ -1319,7 +1369,7 @@ func TestForwardAsAnthropic_OAuthMetadataSessionSurvivesChangingCacheControlAnch
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(firstBody))
 	firstCtx.Request.Header.Set("Content-Type", "application/json")
 
-	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, account, firstBody, "", "gpt-5.5")
+	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, withTestCodexFingerprintSeed(account), firstBody, "", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, firstResult)
 	firstSessionID := upstream.requests[0].Header.Get("session_id")
@@ -1333,7 +1383,7 @@ func TestForwardAsAnthropic_OAuthMetadataSessionSurvivesChangingCacheControlAnch
 	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	secondCtx.Request.Header.Set("Content-Type", "application/json")
 
-	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, account, secondBody, "", "gpt-5.5")
+	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, withTestCodexFingerprintSeed(account), secondBody, "", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, secondResult)
 	require.Equal(t, firstSessionID, upstream.requests[1].Header.Get("session_id"))
@@ -1370,7 +1420,7 @@ func TestForwardAsAnthropic_OAuthKeepsSystemAsDeveloperInput(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.4")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
@@ -1409,7 +1459,7 @@ func TestForwardAsAnthropic_OAuthAddsClaudeCodeTodoGuardForCompatModel(t *testin
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.5")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.5")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
@@ -1446,7 +1496,7 @@ func TestForwardAsAnthropic_OAuthPreservesClaudeCodeToolCallID(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "stable-cache-key", "gpt-5.4")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "stable-cache-key", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "toolu_123", gjson.GetBytes(upstream.lastBody, `input.#(type=="function_call").call_id`).String())
@@ -1484,7 +1534,7 @@ func TestForwardAsAnthropic_StoresStreamingResponseIDWithoutUsage(t *testing.T) 
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(firstBody))
 	firstCtx.Request.Header.Set("Content-Type", "application/json")
 
-	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, account, firstBody, "stable-cache-key", "gpt-5.3-codex")
+	firstResult, err := svc.ForwardAsAnthropic(context.Background(), firstCtx, withTestCodexFingerprintSeed(account), firstBody, "stable-cache-key", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, firstResult)
 	require.Equal(t, "resp_stream_first", firstResult.ResponseID)
@@ -1496,7 +1546,7 @@ func TestForwardAsAnthropic_StoresStreamingResponseIDWithoutUsage(t *testing.T) 
 	secondCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(secondBody))
 	secondCtx.Request.Header.Set("Content-Type", "application/json")
 
-	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, account, secondBody, "stable-cache-key", "gpt-5.3-codex")
+	secondResult, err := svc.ForwardAsAnthropic(context.Background(), secondCtx, withTestCodexFingerprintSeed(account), secondBody, "stable-cache-key", "gpt-5.3-codex")
 	require.NoError(t, err)
 	require.NotNil(t, secondResult)
 	require.Equal(t, "resp_stream_first", gjson.GetBytes(upstream.lastBody, "previous_response_id").String())
@@ -1584,7 +1634,7 @@ func TestForwardAsAnthropic_ForcedCodexInstructionsTemplatePrependsRenderedInstr
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "server-prefix\n\nclient-system", gjson.GetBytes(upstream.lastBody, "instructions").String())
@@ -1631,7 +1681,7 @@ func TestForwardAsAnthropic_ForcedCodexInstructionsTemplateUsesCachedTemplateCon
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "cached-prefix\n\nclient-system", gjson.GetBytes(upstream.lastBody, "instructions").String())
@@ -1676,7 +1726,7 @@ func TestForwardAsAnthropic_ClientDisconnectDrainsUpstreamUsage(t *testing.T) {
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, 9, result.Usage.InputTokens)
@@ -1724,7 +1774,7 @@ func TestForwardAsAnthropic_TerminalUsageWithoutUpstreamCloseReturns(t *testing.
 	}
 	resultCh := make(chan forwardResult, 1)
 	go func() {
-		result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+		result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
@@ -1785,7 +1835,7 @@ func TestForwardAsAnthropic_EventNamedTerminalWithoutUpstreamCloseReturns(t *tes
 	}
 	resultCh := make(chan forwardResult, 1)
 	go func() {
-		result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+		result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
@@ -1853,7 +1903,7 @@ func TestForwardAsAnthropic_EventNamedTerminalWithKeepaliveReturns(t *testing.T)
 	}
 	resultCh := make(chan forwardResult, 1)
 	go func() {
-		result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+		result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
@@ -1908,7 +1958,7 @@ func TestForwardAsAnthropic_BufferedTerminalWithoutUpstreamCloseReturns(t *testi
 	}
 	resultCh := make(chan forwardResult, 1)
 	go func() {
-		result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+		result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
@@ -2006,7 +2056,7 @@ func TestForwardAsAnthropic_BufferedEventNamedTerminalWithoutUpstreamCloseReturn
 	}
 	resultCh := make(chan forwardResult, 1)
 	go func() {
-		result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+		result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 		resultCh <- forwardResult{result: result, err: err}
 	}()
 
@@ -2052,7 +2102,7 @@ func TestForwardAsAnthropic_MissingTerminalBeforeOutputReturnsFailoverAndOps(t *
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.True(t, errors.As(err, &failoverErr), "missing terminal before output must use failover path")
@@ -2107,7 +2157,7 @@ func TestForwardAsAnthropic_MissingTerminalAfterOutputRecordsOpsWithoutFailover(
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing terminal event")
 	var failoverErr *UpstreamFailoverError
@@ -2160,7 +2210,7 @@ func TestForwardAsAnthropic_MissingTerminalAfterClientDisconnectSkipsOpsAndFailo
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing terminal event")
 	var failoverErr *UpstreamFailoverError
@@ -2210,7 +2260,7 @@ func TestForwardAsAnthropic_CompleteStreamDoesNotRecordMissingTerminalOps(t *tes
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, 9, result.Usage.InputTokens)
@@ -2265,7 +2315,7 @@ func TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 		},
 	}
 
-	result, err := svc.ForwardAsAnthropic(reqCtx, c, account, body, "", "gpt-5.1")
+	result, err := svc.ForwardAsAnthropic(reqCtx, c, withTestCodexFingerprintSeed(account), body, "", "gpt-5.1")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
