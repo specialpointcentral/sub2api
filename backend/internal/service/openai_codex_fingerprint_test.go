@@ -320,6 +320,8 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 
 	ids := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
 	require.NotNil(t, ids)
+	const fixedTurnStartedAtUnixMs int64 = 1_777_777_777_777
+	ids.turnStartedAtUnixMs = fixedTurnStartedAtUnixMs
 
 	// 头改写
 	h := http.Header{}
@@ -361,7 +363,8 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	assert.Equal(t, headerTurnID, bodyEmbeddedTurnID, "头和体内嵌 turn-metadata 的 turn_id 必须一致")
 	assert.Equal(t, ids.turnID, headerTurnID, "所有 turn_id 都应来自同一份 ids")
 	assert.Equal(t, headerMeta["turn_started_at_unix_ms"], bodyMeta["turn_started_at_unix_ms"], "头和体的 timestamp 必须一致")
-	assert.Equal(t, float64(ids.turnStartedAtUnixMs), headerMeta["turn_started_at_unix_ms"])
+	assert.Equal(t, float64(fixedTurnStartedAtUnixMs), headerMeta["turn_started_at_unix_ms"])
+	assert.Equal(t, float64(fixedTurnStartedAtUnixMs), bodyMeta["turn_started_at_unix_ms"])
 }
 
 func TestFingerprintIDs_MalformedEmbeddedMetadataRebuiltConsistently(t *testing.T) {
@@ -743,6 +746,7 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 }
 
 func TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant(t *testing.T) {
+	const fixedTurnStartedAtUnixMs int64 = 1_777_777_777_777
 	embedded := `{\"installation_id\":\"real-install\",\"session_id\":\"real-session\",\"sandbox\":\"seatbelt\"}`
 	bodies := map[string]string{
 		"no_client_metadata": `{"model":"gpt-5.6-sol","input":[],"stream":true}`,
@@ -753,10 +757,21 @@ func TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant(t *testing.T) 
 		account := newTestOAuthAccount(4242, map[string]any{codexFingerprintModeExtraKey: string(mode)})
 		ids := resolveCodexFingerprintIDs(account, "client-sess-raw", mode)
 		require.NotNil(t, ids)
+		ids.turnStartedAtUnixMs = fixedTurnStartedAtUnixMs
 		for name, body := range bodies {
 			t.Run(string(mode)+"/"+name, func(t *testing.T) {
 				mapCM, rawCM := rawVsMapClientMetadata(t, []byte(body), ids)
 				assert.Equal(t, mapCM, rawCM, "raw 字节版与 map 版的 client_metadata 结果必须逐点一致")
+				if mode == codexFingerprintDevice || name != "object_with_extras" {
+					return
+				}
+				for _, clientMetadata := range []map[string]any{mapCM, rawCM} {
+					rawMetadata, ok := clientMetadata["x-codex-turn-metadata"].(string)
+					require.True(t, ok)
+					var metadata map[string]any
+					require.NoError(t, json.Unmarshal([]byte(rawMetadata), &metadata))
+					require.Equal(t, float64(fixedTurnStartedAtUnixMs), metadata["turn_started_at_unix_ms"])
+				}
 			})
 		}
 	}
