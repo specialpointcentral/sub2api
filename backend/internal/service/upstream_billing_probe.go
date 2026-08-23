@@ -1001,8 +1001,10 @@ func isUpstreamBillingProbeAccount(account *Account) bool {
 // subdomain, after stripping the port and a trailing DNS dot — because no
 // third-party sub2api relay can live under these domains, while custom
 // relays (the only targets that can answer /v1/sub2api/billing) always do
-// probe. OpenAI-platform accounts never reach this check: they keep the
-// upstream-official behavior of probing api.openai.com.
+// probe. openai.com is on this list too: OpenAI-platform accounts pointing at
+// the official API short-circuit to "unsupported" the same way (probing it
+// would send the account key to a path that cannot exist), matching the
+// skip-official-domain behavior of the other providers.
 // ollama.com is a first-class configuration here (Ollama Cloud accounts are
 // platform openai/anthropic with base_url https://ollama.com/v1), and it is
 // an official provider API just like the rest, so it belongs on this list.

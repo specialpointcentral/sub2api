@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,7 +91,7 @@ func newCodexVersionSyncService(
 	repo SettingRepository,
 	github GitHubReleaseClient,
 ) *OpenAICodexVersionSyncService {
-	return NewOpenAICodexVersionSyncService(repo, &SettingService{}, github, openAICodexVersionSyncInterval)
+	return NewOpenAICodexVersionSyncService(repo, &SettingService{}, github, openAICodexVersionSyncInterval, nil)
 }
 
 // 同仓库同时发布预发布版与其他组件的 tag，必须只认 rust-v 前缀的稳定版，
@@ -123,6 +124,96 @@ func TestOpenAICodexVersionSyncWritesLatestStableVersion(t *testing.T) {
 	newCodexVersionSyncService(repo, github).runOnce()
 
 	require.Equal(t, []string{"0.146.0"}, repo.syncedWrites())
+}
+
+func TestCodexVersionAdoptionDelayUsesStableDeploymentSecret(t *testing.T) {
+	const version = "0.200.1"
+	first := codexVersionAdoptionDelay("deployment-secret-a", version, 48)
+	second := codexVersionAdoptionDelay("deployment-secret-a", version, 48)
+	otherDeployment := codexVersionAdoptionDelay("deployment-secret-b", version, 48)
+
+	require.Equal(t, first, second)
+	require.GreaterOrEqual(t, first, time.Duration(0))
+	require.Less(t, first, 48*time.Hour)
+	require.NotEqual(t, first, otherDeployment)
+	require.Zero(t, codexVersionAdoptionDelay("deployment-secret-a", version, 0))
+	require.Zero(t, codexVersionAdoptionDelay("", version, 48))
+	require.Equal(t, first, codexVersionAdoptionDelay("deployment-secret-a", version, 49))
+	require.Equal(t, first, codexVersionAdoptionDelay("deployment-secret-a", version, 1000))
+}
+
+func TestOpenAICodexVersionSyncStaggersAdoptionUntilStableDeploymentDelay(t *testing.T) {
+	const (
+		secret  = "deployment-jwt-secret-for-codex-stagger"
+		version = "0.200.1"
+	)
+	publishedAt := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	delay := codexVersionAdoptionDelay(secret, version, 48)
+	require.Greater(t, delay, time.Second)
+
+	repo := newCodexVersionSyncSettingRepoStub(map[string]string{
+		SettingKeyOpenAICodexVersionStaggerMaxHours: "48",
+	})
+	github := &codexVersionSyncGitHubStub{latest: &GitHubRelease{
+		TagName:     "rust-v" + version,
+		PublishedAt: publishedAt.Format(time.RFC3339),
+	}}
+	svc := newCodexVersionSyncService(repo, github)
+	svc.jwtSecret = secret
+	svc.now = func() time.Time { return publishedAt.Add(delay - time.Second) }
+
+	svc.runOnce()
+	require.Empty(t, repo.syncedWrites(), "release must remain on the previous version before this deployment's adoption time")
+
+	svc.now = func() time.Time { return publishedAt.Add(delay + time.Second) }
+	svc.runOnce()
+	require.Equal(t, []string{version}, repo.syncedWrites())
+}
+
+func TestOpenAICodexVersionSyncWindowZeroAdoptsImmediately(t *testing.T) {
+	repo := newCodexVersionSyncSettingRepoStub(map[string]string{
+		SettingKeyOpenAICodexVersionStaggerMaxHours: "0",
+	})
+	github := &codexVersionSyncGitHubStub{latest: &GitHubRelease{
+		TagName:     "rust-v0.200.1",
+		PublishedAt: time.Now().Add(-time.Minute).Format(time.RFC3339),
+	}}
+	svc := newCodexVersionSyncService(repo, github)
+	svc.jwtSecret = "deployment-secret"
+
+	svc.runOnce()
+	require.Equal(t, []string{"0.200.1"}, repo.syncedWrites())
+}
+
+func TestOpenAICodexVersionSyncClampsWindowAboveFortyEightHours(t *testing.T) {
+	const (
+		secret  = "deployment-jwt-secret-for-codex-stagger"
+		version = "0.200.1"
+	)
+	publishedAt := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	delay := codexVersionAdoptionDelay(secret, version, 48)
+	require.Greater(t, delay, time.Second)
+
+	repo := newCodexVersionSyncSettingRepoStub(map[string]string{
+		SettingKeyOpenAICodexVersionStaggerMaxHours: "49",
+	})
+	github := &codexVersionSyncGitHubStub{latest: &GitHubRelease{
+		TagName:     "rust-v" + version,
+		PublishedAt: publishedAt.Format(time.RFC3339),
+	}}
+	svc := newCodexVersionSyncService(repo, github)
+	svc.jwtSecret = secret
+	svc.now = func() time.Time { return publishedAt.Add(delay - time.Second) }
+
+	svc.runOnce()
+	require.Empty(t, repo.syncedWrites(), "an oversized setting must use the 48-hour window instead of adopting immediately")
+}
+
+func TestNewOpenAICodexVersionSyncServiceUsesJWTSecret(t *testing.T) {
+	svc := NewOpenAICodexVersionSyncService(nil, nil, nil, time.Hour, &config.Config{
+		JWT: config.JWTConfig{Secret: "configured-deployment-secret"},
+	})
+	require.Equal(t, "configured-deployment-secret", svc.jwtSecret)
 }
 
 // 只向前推进：上游偶发返回旧数据或重新发布历史 tag 时不把已同步版本降级。
@@ -259,7 +350,7 @@ func TestOpenAICodexVersionSyncLatestSharesFiltering(t *testing.T) {
 // 依赖缺失时 Start 必须直接返回，不能起一个空转的 goroutine。
 func TestOpenAICodexVersionSyncStartRequiresDependencies(t *testing.T) {
 	require.NotPanics(t, func() {
-		svc := NewOpenAICodexVersionSyncService(nil, nil, nil, openAICodexVersionSyncInterval)
+		svc := NewOpenAICodexVersionSyncService(nil, nil, nil, openAICodexVersionSyncInterval, nil)
 		svc.Start()
 		svc.Stop()
 	})

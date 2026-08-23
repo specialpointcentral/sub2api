@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -16,6 +17,47 @@ func requireOpenAICodexProbeHeaders(t *testing.T, h http.Header) {
 	require.Equal(t, codexCLIVersion, h.Get("Version"))
 	require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
 	require.NotEmpty(t, h.Get("X-Codex-Window-ID"))
+}
+
+func TestDeriveCodexUAPersonaStableWeightedDistribution(t *testing.T) {
+	counts := map[codexUAPersona]int{}
+	for i := 0; i < 10000; i++ {
+		seed := fmt.Sprintf("persona-device-%d", i)
+		first := deriveCodexUAPersona(seed)
+		require.Equal(t, first, deriveCodexUAPersona(seed))
+		counts[first]++
+	}
+
+	require.InDelta(t, 4500, counts[codexUAPersonaMac], 200)
+	require.InDelta(t, 3000, counts[codexUAPersonaUbuntu], 200)
+	require.InDelta(t, 2500, counts[codexUAPersonaWindows], 200)
+}
+
+func TestBuildCodexPersonaUserAgentAndSandbox(t *testing.T) {
+	tests := []struct {
+		persona codexUAPersona
+		ua      string
+		sandbox string
+	}{
+		{codexUAPersonaMac, "codex-tui/0.200.1 (Mac OS X 15.6.1; arm64) Apple_Terminal (codex-tui; 0.200.1)", "seatbelt"},
+		{codexUAPersonaUbuntu, "codex-tui/0.200.1 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.200.1)", "seccomp"},
+		{codexUAPersonaWindows, "codex-tui/0.200.1 (Windows 11.0.0; x86_64) WindowsTerminal (codex-tui; 0.200.1)", "none"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.persona), func(t *testing.T) {
+			ua := buildCodexPersonaUserAgent(tt.persona, "0.200.1")
+			require.Equal(t, tt.ua, ua)
+			require.Equal(t, tt.sandbox, sandboxForCodexUAPersona(tt.persona))
+		})
+	}
+}
+
+func TestWindowsSandboxRewriteDependsOnPersona(t *testing.T) {
+	const windowsUA = "codex-tui/0.200.1 (Windows 11.0.0; x86_64) WindowsTerminal (codex-tui; 0.200.1)"
+
+	require.Empty(t, codexSandboxForUserAgent(windowsUA), "persona off must preserve generic Windows metadata")
+	require.Equal(t, "none", sandboxForCodexUAPersona(codexUAPersonaWindows), "persona on owns the Windows sandbox mapping")
 }
 
 // 强制统一出口：无论客户端自报什么身份，OAuth 出站的 User-Agent / originator / version
@@ -326,9 +368,9 @@ func TestCodexSandboxForUserAgent(t *testing.T) {
 		{name: "Linux", userAgent: "codex_exec/0.149.0 (Linux 6.8; x86_64) xterm-256color", want: "seccomp"},
 		{name: "Mac", userAgent: "codex-tui/0.149.0 (Mac OS X 14.0; arm64) iTerm", want: "seatbelt"},
 		{name: "unknown OS", userAgent: "codex-tui/0.149.0 xterm-256color", want: ""},
-		{name: "Windows Emacs is not Mac", userAgent: "codex-tui/0.149.0 (Windows 11; x86_64) Emacs", want: ""},
+		{name: "generic Windows is preserved", userAgent: "codex-tui/0.149.0 (Windows 11; x86_64) Emacs", want: ""},
 		{name: "unknown platform ignores Mac trailer text", userAgent: "codex-tui/0.149.0 (Haiku 1.0; x86_64) term (mac-helper; 1.0)", want: ""},
-		{name: "Windows platform wins over Linux trailer text", userAgent: "codex-tui/0.149.0 (Windows 11; x86_64) term (linux-helper; 1.0)", want: ""},
+		{name: "Windows platform ignores Linux trailer text", userAgent: "codex-tui/0.149.0 (Windows 11; x86_64) term (linux-helper; 1.0)", want: ""},
 	}
 
 	for _, tt := range tests {

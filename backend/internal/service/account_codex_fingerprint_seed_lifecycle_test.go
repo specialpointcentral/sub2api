@@ -243,3 +243,86 @@ func TestAccountServiceCreateAndUpdateCodexSeedLifecycle(t *testing.T) {
 	require.Equal(t, createdSeed, requireValidCodexFingerprintSeed(t, updated.Extra))
 	require.Equal(t, "full", updated.Extra[codexFingerprintModeExtraKey])
 }
+
+func TestPrepareCodexFingerprintExtraForCreateDerivesSharedSeedForDuplicateUpstreamIdentity(t *testing.T) {
+	modeExtra := func() map[string]any {
+		return map[string]any{codexFingerprintModeExtraKey: "session"}
+	}
+	oauthCreds := func(accountID string) map[string]any {
+		return map[string]any{"access_token": "token-a", "chatgpt_account_id": accountID, "chatgpt_user_id": "user-1"}
+	}
+
+	// Two new rows on the same ChatGPT account derive the same seed.
+	first := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, oauthCreds("chatgpt-same"), modeExtra())
+	second := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, oauthCreds("chatgpt-same"), modeExtra())
+	seedFirst := requireValidCodexFingerprintSeed(t, first)
+	require.Equal(t, seedFirst, requireValidCodexFingerprintSeed(t, second))
+
+	// A different ChatGPT account derives a different seed.
+	other := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, oauthCreds("chatgpt-other"), modeExtra())
+	require.NotEqual(t, seedFirst, requireValidCodexFingerprintSeed(t, other))
+
+	// Setup tokens share the bearer fingerprint: same token, same seed.
+	tokenCreds := func(token string) map[string]any { return map[string]any{"access_token": token} }
+	setupA := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeSetupToken, tokenCreds("setup-token-a"), modeExtra())
+	setupA2 := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeSetupToken, tokenCreds("setup-token-a"), modeExtra())
+	setupB := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeSetupToken, tokenCreds("setup-token-b"), modeExtra())
+	require.Equal(t, requireValidCodexFingerprintSeed(t, setupA), requireValidCodexFingerprintSeed(t, setupA2))
+	require.NotEqual(t, requireValidCodexFingerprintSeed(t, setupA), requireValidCodexFingerprintSeed(t, setupB))
+
+	// API key accounts share the derived seed only for the same upstream key.
+	keyCreds := func(key string) map[string]any { return map[string]any{"api_key": key} }
+	keyA := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeAPIKey, keyCreds("sk-upstream-a"), modeExtra())
+	keyA2 := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeAPIKey, keyCreds("sk-upstream-a"), modeExtra())
+	keyB := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeAPIKey, keyCreds("sk-upstream-b"), modeExtra())
+	require.Equal(t, requireValidCodexFingerprintSeed(t, keyA), requireValidCodexFingerprintSeed(t, keyA2))
+	require.NotEqual(t, requireValidCodexFingerprintSeed(t, keyA), requireValidCodexFingerprintSeed(t, keyB))
+
+	// No recognizable upstream identity falls back to a random seed.
+	randomA := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, map[string]any{"access_token": "token-only"}, modeExtra())
+	randomB := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, map[string]any{"access_token": "token-only"}, modeExtra())
+	require.NotEqual(t, requireValidCodexFingerprintSeed(t, randomA), requireValidCodexFingerprintSeed(t, randomB))
+
+	// Off mode never writes a seed, derived or not.
+	off := prepareCodexFingerprintExtraForCreate(PlatformOpenAI, AccountTypeOAuth, oauthCreds("chatgpt-same"), nil)
+	require.NotContains(t, off, codexFingerprintSeedExtraKey)
+}
+
+func TestPrepareCodexFingerprintExtraForUpdatePreservesExistingSeed(t *testing.T) {
+	account := &Account{
+		ID: 1501, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "token-a", "chatgpt_account_id": "chatgpt-same"},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: "session",
+			codexFingerprintSeedExtraKey: userSuppliedCodexFingerprintSeed,
+		},
+	}
+	updated := prepareCodexFingerprintExtraForUpdate(account, map[string]any{codexFingerprintModeExtraKey: "session"})
+	require.Equal(t, userSuppliedCodexFingerprintSeed, updated[codexFingerprintSeedExtraKey])
+}
+
+func TestPrepareCodexFingerprintExtraForUpdateDerivesSeedForSeedlessRow(t *testing.T) {
+	account := &Account{
+		ID: 1502, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "token-a", "chatgpt_account_id": "chatgpt-same"},
+		Extra:       map[string]any{codexFingerprintModeExtraKey: "session"},
+	}
+	updated := prepareCodexFingerprintExtraForUpdate(account, account.Extra)
+	expected, ok := DeriveCodexFingerprintSeed(PlatformOpenAI, AccountTypeOAuth, account.Credentials)
+	require.True(t, ok)
+	require.Equal(t, expected, updated[codexFingerprintSeedExtraKey])
+
+	// Rows with live device pool state keep random-seed semantics: their converged
+	// identity is anchored to the historical seed and must not switch basis.
+	pooled := &Account{
+		ID: 1503, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "token-a", "chatgpt_account_id": "chatgpt-same"},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: "session",
+			codexDevicePoolExtraKey:      map[string]any{"slots": []any{}},
+		},
+	}
+	pooledUpdated := prepareCodexFingerprintExtraForUpdate(pooled, pooled.Extra)
+	pooledSeed := requireValidCodexFingerprintSeed(t, pooledUpdated)
+	require.NotEqual(t, expected, pooledSeed)
+}
