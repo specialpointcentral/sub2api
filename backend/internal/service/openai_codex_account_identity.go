@@ -162,36 +162,6 @@ func applyCodexAccountIdentityEmbeddedMetadata(values map[string]any, account *A
 	return true
 }
 
-func applyCodexAccountIdentityClientMetadataMap(requestBody map[string]any, account *Account, apiKeyID int64) bool {
-	if requestBody == nil || codexAccountIdentityNamespace(account) == "" {
-		return false
-	}
-	changed := false
-	clientMetadata, _ := requestBody["client_metadata"].(map[string]any)
-	originalBodySessionID := ""
-	if clientMetadata != nil {
-		originalBodySessionID, _ = clientMetadata["session_id"].(string)
-		if applyCodexAccountIdentityFields(clientMetadata, account, apiKeyID) {
-			changed = true
-		}
-		if applyCodexAccountIdentityEmbeddedMetadata(clientMetadata, account, apiKeyID) {
-			changed = true
-		}
-	}
-	if raw, ok := requestBody["prompt_cache_key"].(string); ok && strings.TrimSpace(raw) != "" {
-		kind := "prompt-cache"
-		if strings.TrimSpace(originalBodySessionID) != "" && raw == originalBodySessionID {
-			kind = "session"
-		}
-		next := scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
-		if next != raw {
-			requestBody["prompt_cache_key"] = next
-			changed = true
-		}
-	}
-	return changed
-}
-
 // applyCodexAccountIdentityClientMetadataRaw scopes only the small identity
 // subobjects with gjson/sjson. The passthrough hot path never unmarshals the
 // potentially multi-megabyte request body.
