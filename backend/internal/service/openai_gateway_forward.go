@@ -845,6 +845,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	wsRetryLoop:
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			wsAttempts = attempt
+			if paceErr := s.waitForOpenAIAccountStart(ctx, account); paceErr != nil {
+				return nil, paceErr
+			}
 			wsResult, wsErr = s.forwardOpenAIWSV2(
 				ctx,
 				c,
@@ -1021,6 +1024,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
+		if paceErr := s.waitForOpenAIAccountStart(ctx, account); paceErr != nil {
+			if headerGuard != nil {
+				headerGuard.close()
+			}
+			return nil, paceErr
+		}
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
