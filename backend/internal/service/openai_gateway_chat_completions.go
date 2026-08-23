@@ -368,6 +368,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	if paceErr := s.waitForOpenAIAccountStart(ctx, account); paceErr != nil {
+		return nil, paceErr
+	}
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
