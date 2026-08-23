@@ -47,6 +47,153 @@ func (d *openAIWSSingleConnDialer) Dial(
 	return d.conn, 0, nil, nil
 }
 
+// runOpenAIWSIngressFingerprintTest drives the native ingress path through its
+// real client websocket boundary. It deliberately observes the dialer rather
+// than a helper invocation, so seed failures prove no pool acquire/dial occurs.
+func runOpenAIWSIngressFingerprintTest(
+	t *testing.T,
+	svc *OpenAIGatewayService,
+	account *Account,
+	requestHeaders http.Header,
+	firstPayload string,
+	expectUpstreamEvent bool,
+) error {
+	t.Helper()
+	serverErrCh := make(chan error, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+
+		rec := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(rec)
+		req := r.Clone(r.Context())
+		req.Header = requestHeaders.Clone()
+		ginCtx.Request = req
+
+		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+		_, firstMessage, readErr := conn.Read(readCtx)
+		cancelRead()
+		if readErr != nil {
+			serverErrCh <- readErr
+			return
+		}
+		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "oauth-token", firstMessage, nil)
+	}))
+	defer wsServer.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(firstPayload))
+	cancelWrite()
+	require.NoError(t, err)
+	if expectUpstreamEvent {
+		readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _, err = clientConn.Read(readCtx)
+		cancelRead()
+		require.NoError(t, err)
+		_ = clientConn.Close(coderws.StatusNormalClosure, "done")
+	}
+
+	select {
+	case serverErr := <-serverErrCh:
+		return serverErr
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiting for fingerprint ingress websocket to finish")
+		return nil
+	}
+}
+
+func newOpenAIWSIngressFingerprintConfig() *config.Config {
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	return cfg
+}
+
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_NamespacesPromptCacheOnlyOAuthSession(t *testing.T) {
+	// Independently derived from SHA-256("11111111-1111-4111-8111-111111111111:ingress-prompt-only-round2")
+	// after setting UUIDv7/RFC4122 bits; no production helper is used.
+	const wantSession = "8aa60eac-b0be-7e16-8cbe-86785ca5662a"
+	cfg := newOpenAIWSIngressFingerprintConfig()
+	captureConn := &openAIWSCaptureConn{events: [][]byte{
+		[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_fingerprint","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+	}}
+	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(captureDialer)
+	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: &httpUpstreamRecorder{}, cache: &stubGatewayCache{}, openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(), openaiWSPool: pool}
+	account := newTestOAuthAccount(62, map[string]any{"responses_websockets_v2_enabled": true, codexFingerprintModeExtraKey: "off"})
+	account.Credentials = map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"}
+	account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
+
+	err := runOpenAIWSIngressFingerprintTest(t, svc, account, http.Header{"User-Agent": []string{"codex_cli_rs/0.98.0"}}, `{"type":"response.create","model":"gpt-5.1","stream":false,"prompt_cache_key":"ingress-prompt-only-round2","input":"hello"}`, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, captureDialer.DialCount())
+	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session-id"))
+	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session_id"))
+	require.Equal(t, wantSession, gjson.Get(requestToJSONString(captureConn.writes[0]), "client_metadata.session_id").String())
+}
+
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_FailsClosedForSeedlessOAuthBeforeDial(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		repo AccountRepository
+	}{
+		{name: "repository lacks seed capability", repo: &stubOpenAIAccountRepo{}},
+		{name: "ensure error", repo: &codexPersonaFirstWriterRepo{ensureErr: errors.New("seed unavailable")}},
+		{name: "malformed seed", repo: &codexPersonaFirstWriterRepo{seed: "not-a-uuid"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newOpenAIWSIngressFingerprintConfig()
+			captureDialer := &openAIWSCaptureDialer{conn: &openAIWSCaptureConn{}}
+			pool := newOpenAIWSConnPool(cfg)
+			pool.setClientDialerForTest(captureDialer)
+			svc := &OpenAIGatewayService{cfg: cfg, accountRepo: tt.repo, httpUpstream: &httpUpstreamRecorder{}, cache: &stubGatewayCache{}, openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(), openaiWSPool: pool}
+			account := &Account{ID: 63, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"access_token": "oauth-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
+
+			err := runOpenAIWSIngressFingerprintTest(t, svc, account, http.Header{"User-Agent": []string{"codex_cli_rs/0.98.0"}}, `{"type":"response.create","model":"gpt-5.1","stream":false,"prompt_cache_key":"ingress-seedless","input":"hello"}`, false)
+			require.Error(t, err)
+			require.Zero(t, captureDialer.DialCount())
+		})
+	}
+}
+
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_LeavesAPIKeySessionBehaviorUnchanged(t *testing.T) {
+	cfg := newOpenAIWSIngressFingerprintConfig()
+	captureConn := &openAIWSCaptureConn{events: [][]byte{
+		[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_api_key","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+	}}
+	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(captureDialer)
+	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: &httpUpstreamRecorder{}, cache: &stubGatewayCache{}, openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(), openaiWSPool: pool}
+	account := &Account{ID: 64, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"api_key": "sk-test"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
+
+	err := runOpenAIWSIngressFingerprintTest(t, svc, account, http.Header{"User-Agent": []string{"unit-test-agent/1.0"}}, `{"type":"response.create","model":"gpt-5.1","stream":false,"prompt_cache_key":"ingress-api-key-cache","input":"hello"}`, true)
+	require.NoError(t, err)
+	require.Equal(t, "ingress-api-key-cache", captureDialer.lastHeaders.Get("session_id"))
+	require.Empty(t, captureDialer.lastHeaders.Get("session-id"))
+}
+
 func TestOpenAIWSDownstreamWriteContext_CancellationOwnership(t *testing.T) {
 	t.Run("pre-canceled ordinary context is canceled before return", func(t *testing.T) {
 		controlCtx, cancelControl := context.WithCancelCause(context.Background())
@@ -683,6 +830,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridge
 		Extra: map[string]any{
 			"openai_oauth_responses_websockets_v2_enabled": true,
 			"codex_image_generation_bridge":                true,
+			codexFingerprintSeedExtraKey:                   testCodexFingerprintSeed,
 		},
 	}
 

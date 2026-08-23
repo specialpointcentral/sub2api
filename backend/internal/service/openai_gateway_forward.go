@@ -432,7 +432,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if c != nil && c.Request != nil {
 				clientHeaders = c.Request.Header
 			}
-			fpIDs := s.resolveCodexFingerprintIDsForOutbound(account, clientHeaders, !compatMessagesBridge)
+			clientHeaders = withCodexFingerprintSessionHint(clientHeaders, codexFingerprintSessionHint(decoded["client_metadata"], decoded["prompt_cache_key"]))
+			fpIDs, fpResolveErr := s.resolveCodexFingerprintIDsForOutbound(c, account, clientHeaders, !compatMessagesBridge)
+			if fpResolveErr != nil {
+				return nil, fmt.Errorf("resolve outbound codex fingerprint: %w", fpResolveErr)
+			}
 			if fpIDs != nil {
 				if applyCodexFingerprintClientMetadata(decoded, fpIDs) {
 					markDecodedModified()
@@ -1185,7 +1189,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// 终态收口：强制统一 OAuth 出站身份（User-Agent / originator / version 同源自洽）。
 	// 客户端自报身份不参与构造，浏览器型 UA 也因此不会再到达上游（原浏览器 UA 兜底已被吸收）。
 	if account.Type == AccountTypeOAuth {
-		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUAForRequest(c, account))
 	}
 
 	// Ensure required headers exist
@@ -1212,4 +1216,14 @@ func (s *OpenAIGatewayService) codexIdentityOverrideUA(account *Account) string 
 		return ""
 	}
 	return account.GetOpenAIUserAgent()
+}
+
+func (s *OpenAIGatewayService) codexIdentityOverrideUAForRequest(c *gin.Context, account *Account) string {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+		return ""
+	}
+	if customUA := strings.TrimSpace(account.GetOpenAIUserAgent()); customUA != "" {
+		return customUA
+	}
+	return stagedCodexFingerprintUserAgent(c, account)
 }

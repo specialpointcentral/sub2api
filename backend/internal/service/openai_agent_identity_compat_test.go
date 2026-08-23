@@ -411,6 +411,7 @@ func TestOpenAIAgentIdentityCompatRoutesRecoverInvalidTaskOnce(t *testing.T) {
 					"task_id":            "task-compat-old",
 					"chatgpt_account_id": "account-compat-recovery",
 				},
+				Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 			}
 			repo := &agentIdentityForwardRepo{account: account}
 			registerCalls := 0

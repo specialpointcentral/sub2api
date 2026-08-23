@@ -1985,7 +1985,7 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPTransformedHeaderBodyParityAnd
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	wantInstall := resolveConvergedInstallationID(account, seed)
-	wantSession := resolveConvergedSessionID(seed)
+	wantSession := resolveStableCodexDeviceSessionID(seed)
 	wantThread := resolveConvergedThreadID(seed, "header-session")
 
 	require.Equal(t, wantInstall, upstream.lastReq.Header.Get("x-codex-installation-id"))
@@ -2047,7 +2047,7 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPRawPassthroughHeaderBodyParity
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
 	wantInstall := resolveConvergedInstallationID(account, seed)
-	wantSession := resolveConvergedSessionID(seed)
+	wantSession := resolveStableCodexDeviceSessionID(seed)
 	wantThread := resolveConvergedThreadID(seed, "header-session")
 
 	require.Equal(t, wantInstall, upstream.lastReq.Header.Get("x-codex-installation-id"))
@@ -2107,7 +2107,7 @@ func TestOpenAIGatewayService_CodexFingerprintCompactDoesNotRewriteBodyCacheKeyO
 
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
-	require.NotEqual(t, resolveConvergedSessionID(seed), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.NotEqual(t, resolveNamespacedCodexSessionID(seed, "stale-session"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, "body-session", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, "body-session", gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").Exists())
@@ -2148,9 +2148,103 @@ func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPro
 
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
-	wantSession := resolveConvergedSessionID(seed)
+	wantSession := resolveStableCodexDeviceSessionID(seed)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
+	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
+}
+
+func TestOpenAIGatewayService_ForwardAsAnthropicPreservesStagedOAuthSessionOverCompatCacheSession(t *testing.T) {
+	// This literal is independently derived from SHA-256("11111111-1111-4111-8111-111111111111:messages-header-session")
+	// with UUIDv7/RFC4122 bits fixed; it deliberately does not reuse production UUID helpers.
+	const wantSession = "4819e4ff-012e-78cf-867b-6848fa8a4eea"
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("session-id", "messages-header-session")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"stop after request capture"}}`)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream, toolCorrector: NewCodexToolCorrector()}
+	account := newTestOAuthAccount(59, map[string]any{codexFingerprintModeExtraKey: "off"})
+	account.Credentials = map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"}
+	account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
+
+	_, _ = svc.ForwardAsAnthropic(context.Background(), c, account, []byte(`{"model":"gpt-5.5","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`), "messages-compat-cache", "")
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
+	require.Empty(t, upstream.lastReq.Header.Get("conversation_id"), "conversation_id semantics stay unchanged")
+}
+
+func TestOpenAIGatewayService_ForwardAsAnthropicNamespacesPromptCacheOnlyOAuthSession(t *testing.T) {
+	// Independently derived from SHA-256("11111111-1111-4111-8111-111111111111:messages-prompt-only-round2")
+	// after setting UUIDv7/RFC4122 bits; no production derivation helper is used.
+	const wantSession = "78488960-8ba4-76a4-855c-8c55bd636e95"
+
+	for _, tt := range []struct {
+		name               string
+		clientConversation string
+	}{
+		{name: "no client conversation keeps it absent"},
+		{name: "client conversation preserves compat behavior", clientConversation: "existing-conversation"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			if tt.clientConversation != "" {
+				c.Request.Header.Set("conversation_id", tt.clientConversation)
+			}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"stop after request capture"}}`)),
+			}}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream, toolCorrector: NewCodexToolCorrector()}
+			account := newTestOAuthAccount(61, map[string]any{codexFingerprintModeExtraKey: "off"})
+			account.Credentials = map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"}
+			account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
+
+			_, _ = svc.ForwardAsAnthropic(context.Background(), c, account, []byte(`{"model":"gpt-5.5","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`), "messages-prompt-only-round2", "")
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
+			require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
+			require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
+			if tt.clientConversation == "" {
+				require.Empty(t, upstream.lastReq.Header.Get("conversation_id"))
+			} else {
+				require.Equal(t, isolateOpenAISessionID(0, "messages-prompt-only-round2"), upstream.lastReq.Header.Get("conversation_id"))
+			}
+		})
+	}
+}
+
+func TestOpenAIGatewayService_ForwardAsChatCompletionsPreservesStagedOAuthSessionOverCompatCacheSession(t *testing.T) {
+	// Independently derived from SHA-256("11111111-1111-4111-8111-111111111111:chat-header-session")
+	// after setting UUIDv7/RFC4122 bits; this must remain an external oracle.
+	const wantSession = "09a08207-acd4-718c-863c-595303582b64"
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Request.Header.Set("session-id", "chat-header-session")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"stop after request capture"}}`)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream, toolCorrector: NewCodexToolCorrector()}
+	account := newTestOAuthAccount(60, map[string]any{codexFingerprintModeExtraKey: "off"})
+	account.Credentials = map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"}
+	account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
+
+	_, _ = svc.ForwardAsChatCompletions(context.Background(), c, account, []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`), "chat-compat-cache", "")
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
 }
 

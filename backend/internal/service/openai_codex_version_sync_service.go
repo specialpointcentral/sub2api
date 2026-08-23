@@ -2,10 +2,16 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 const (
@@ -17,7 +23,7 @@ const (
 	// openAICodexVersionSyncRepo 官方 Codex 客户端仓库。
 	openAICodexVersionSyncRepo = "openai/codex"
 	// openAICodexVersionSyncPerPage 回退路径单次拉取的 release 数量（主路径见
-	// fetchLatestStableVersion）。该仓库预发布极密集——0.145.0 与 0.146.0 之间隔着 20 多个
+	// fetchLatestStableRelease）。该仓库预发布极密集——0.145.0 与 0.146.0 之间隔着 20 多个
 	// alpha，实测 30 条里只有 2 条稳定版，第二条已排在第 26 位，因此这个页大小不能再往下调，
 	// 否则整页扫不到稳定版、同步会静默停更。
 	openAICodexVersionSyncPerPage = 30
@@ -36,6 +42,8 @@ type OpenAICodexVersionSyncService struct {
 	settingService *SettingService
 	githubClient   GitHubReleaseClient
 	interval       time.Duration
+	jwtSecret      string
+	now            func() time.Time
 	stopCh         chan struct{}
 	stopOnce       sync.Once
 	wg             sync.WaitGroup
@@ -46,12 +54,19 @@ func NewOpenAICodexVersionSyncService(
 	settingService *SettingService,
 	githubClient GitHubReleaseClient,
 	interval time.Duration,
+	cfg *config.Config,
 ) *OpenAICodexVersionSyncService {
+	jwtSecret := ""
+	if cfg != nil {
+		jwtSecret = cfg.JWT.Secret
+	}
 	return &OpenAICodexVersionSyncService{
 		settingRepo:    settingRepo,
 		settingService: settingService,
 		githubClient:   githubClient,
 		interval:       interval,
+		jwtSecret:      jwtSecret,
+		now:            time.Now,
 		stopCh:         make(chan struct{}),
 	}
 }
@@ -126,7 +141,8 @@ func (s *OpenAICodexVersionSyncService) runOnce() {
 		return
 	}
 
-	latest := s.fetchLatestStableVersion(ctx)
+	release := s.fetchLatestStableRelease(ctx)
+	latest := release.version
 	if latest == "" {
 		return
 	}
@@ -134,6 +150,9 @@ func (s *OpenAICodexVersionSyncService) runOnce() {
 	current := NormalizeCodexClientVersion(s.currentSyncedVersion(ctx))
 	// 只向前推进：上游偶发返回旧数据或重新发布历史 tag 时不把已同步的版本号降级。
 	if current != "" && CompareVersions(latest, current) <= 0 {
+		return
+	}
+	if !s.codexVersionReadyForAdoption(ctx, release) {
 		return
 	}
 	if err := s.settingRepo.Set(ctx, SettingKeyOpenAICodexClientVersionSynced, latest); err != nil {
@@ -144,7 +163,7 @@ func (s *OpenAICodexVersionSyncService) runOnce() {
 	slog.Info("openai_codex_version_synced", "previous", current, "version", latest)
 }
 
-// fetchLatestStableVersion 取官方最新稳定版客户端版本号；取不到时返回空串，
+// fetchLatestStableRelease 取官方最新稳定版客户端版本号与发布时间；取不到时返回零值，
 // 由调用方保持既有值（不清空、不降级），各失败分支自行落日志。
 //
 // 主路径 /releases/latest：该端点本身就排除 draft 与 prerelease，直接给出最新正式发布，
@@ -155,25 +174,25 @@ func (s *OpenAICodexVersionSyncService) runOnce() {
 // （如 rusty-v8-*）某天发了正式 release 而成为 latest，主路径会被 rust-v 前缀过滤挡掉；
 // 此时必须扫一页 release 才能继续跟随官方版本，否则版本号会静默停更。
 // 两条路径共用同一套过滤（前缀 / draft / prerelease / 版本号形态），语义不会分叉。
-func (s *OpenAICodexVersionSyncService) fetchLatestStableVersion(ctx context.Context) string {
+func (s *OpenAICodexVersionSyncService) fetchLatestStableRelease(ctx context.Context) codexStableRelease {
 	release, err := s.githubClient.FetchLatestRelease(ctx, openAICodexVersionSyncRepo)
 	if err != nil {
 		slog.Warn("openai_codex_version_sync_latest_fetch_failed", "error", err)
-	} else if version := latestCodexStableReleaseVersion([]*GitHubRelease{release}); version != "" {
-		return version
+	} else if stable := latestCodexStableRelease([]*GitHubRelease{release}); stable.version != "" {
+		return stable
 	}
 
 	// 主路径没拿到可用版本（抓取失败，或 latest 不是客户端 tag 家族的稳定版）。
 	releases, err := s.githubClient.FetchRecentReleases(ctx, openAICodexVersionSyncRepo, openAICodexVersionSyncPerPage)
 	if err != nil {
 		slog.Warn("openai_codex_version_sync_fetch_failed", "error", err)
-		return ""
+		return codexStableRelease{}
 	}
-	version := latestCodexStableReleaseVersion(releases)
-	if version == "" {
+	stable := latestCodexStableRelease(releases)
+	if stable.version == "" {
 		slog.Warn("openai_codex_version_sync_no_stable_release", "repo", openAICodexVersionSyncRepo)
 	}
-	return version
+	return stable
 }
 
 // autoSyncEnabled 读取面板开关。缺失或空值视为开启，与设置默认值一致；
@@ -202,7 +221,16 @@ func (s *OpenAICodexVersionSyncService) currentSyncedVersion(ctx context.Context
 // 版本号不带 -alpha/-beta 之类后缀。取最大值而非最新发布，避免重新发布历史 tag 造成回退。
 // 主路径的单条 /releases/latest 结果也走本函数（单元素切片），保证两条取数路径的过滤语义一致。
 func latestCodexStableReleaseVersion(releases []*GitHubRelease) string {
-	best := ""
+	return latestCodexStableRelease(releases).version
+}
+
+type codexStableRelease struct {
+	version     string
+	publishedAt time.Time
+}
+
+func latestCodexStableRelease(releases []*GitHubRelease) codexStableRelease {
+	best := codexStableRelease{}
 	for _, release := range releases {
 		if release == nil || release.Draft || release.Prerelease {
 			continue
@@ -215,9 +243,44 @@ func latestCodexStableReleaseVersion(releases []*GitHubRelease) string {
 		if version == "" || strings.Contains(version, "-") {
 			continue
 		}
-		if best == "" || CompareVersions(version, best) > 0 {
-			best = version
+		if best.version == "" || CompareVersions(version, best.version) > 0 {
+			publishedAt, _ := time.Parse(time.RFC3339, strings.TrimSpace(release.PublishedAt))
+			best = codexStableRelease{version: version, publishedAt: publishedAt}
 		}
 	}
 	return best
+}
+
+// codexVersionAdoptionDelay derives one stable deployment-wide delay per release.
+// JWT secret is the deployment identity; HMAC keeps the derived value opaque.
+func codexVersionAdoptionDelay(jwtSecret, version string, maxHours int) time.Duration {
+	if maxHours > 48 {
+		maxHours = 48
+	}
+	if strings.TrimSpace(jwtSecret) == "" || maxHours <= 0 {
+		return 0
+	}
+	mac := hmac.New(sha256.New, []byte(jwtSecret))
+	_, _ = mac.Write([]byte("sub2api:codex-version-adoption:v1:" + version))
+	value := binary.BigEndian.Uint64(mac.Sum(nil)[:8])
+	window := uint64(time.Duration(maxHours) * time.Hour)
+	return time.Duration(value % window)
+}
+
+func (s *OpenAICodexVersionSyncService) codexVersionReadyForAdoption(ctx context.Context, release codexStableRelease) bool {
+	maxHours := 0
+	if value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAICodexVersionStaggerMaxHours); err == nil {
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(value)); parseErr == nil && parsed >= 0 {
+			maxHours = parsed
+		}
+	}
+	delay := codexVersionAdoptionDelay(s.jwtSecret, release.version, maxHours)
+	if delay == 0 || release.publishedAt.IsZero() {
+		return true
+	}
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	return !now().Before(release.publishedAt.Add(delay))
 }

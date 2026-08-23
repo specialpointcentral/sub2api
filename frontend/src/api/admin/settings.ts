@@ -634,6 +634,10 @@ export interface SystemSettings {
   openai_codex_client_version: string;
   openai_codex_client_version_synced: string;
   openai_codex_version_auto_sync_enabled: boolean;
+  openai_codex_device_pool_size: number;
+  openai_codex_device_pool_platform_ratio: string;
+  openai_codex_ua_persona_enabled: boolean;
+  openai_codex_version_stagger_max_hours: number;
   // codex_cli_only 加固
   min_codex_version: string;
   max_codex_version: string;
@@ -950,6 +954,10 @@ export interface UpdateSettingsRequest {
   openai_codex_user_agent?: string;
   openai_codex_client_version?: string;
   openai_codex_version_auto_sync_enabled?: boolean;
+  openai_codex_device_pool_size?: number;
+  openai_codex_device_pool_platform_ratio?: string;
+  openai_codex_ua_persona_enabled?: boolean;
+  openai_codex_version_stagger_max_hours?: number;
   // codex_cli_only 加固
   min_codex_version?: string;
   max_codex_version?: string;
