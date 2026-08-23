@@ -3517,9 +3517,9 @@
         </div>
       </div>
 
-      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
+      <!-- Codex 指纹收敛模式（OpenAI OAuth / API Key） -->
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -3531,6 +3531,24 @@
           </div>
           <div class="w-52 flex-shrink-0">
             <Select v-model="codexFingerprintMode" data-testid="create-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 非 Codex 流量策略（OpenAI OAuth / API Key） -->
+      <div
+        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.nonCodexTrafficPolicy') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.nonCodexTrafficPolicyDesc') }}
+            </p>
+          </div>
+          <div class="w-52 flex-shrink-0">
+            <Select v-model="nonCodexTrafficPolicy" data-testid="create-non-codex-traffic-policy-select" :options="nonCodexTrafficPolicyOptions" />
           </div>
         </div>
       </div>
@@ -4603,6 +4621,12 @@ const codexFingerprintModeOptions = computed(() => [
   { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
   { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
 ])
+type NonCodexTrafficPolicy = 'off' | 'pi'
+const nonCodexTrafficPolicy = ref<NonCodexTrafficPolicy>('off')
+const nonCodexTrafficPolicyOptions = computed(() => [
+  { value: 'off' as NonCodexTrafficPolicy, label: t('admin.accounts.openai.nonCodexTrafficOff') },
+  { value: 'pi' as NonCodexTrafficPolicy, label: t('admin.accounts.openai.nonCodexTrafficPi') },
+])
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
@@ -5615,6 +5639,7 @@ const resetForm = () => {
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
+  nonCodexTrafficPolicy.value = 'off'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5721,6 +5746,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode
+  }
+  if (nonCodexTrafficPolicy.value === 'pi') {
+    extra.non_codex_traffic_policy = 'pi'
+  } else {
+    delete extra.non_codex_traffic_policy
   }
   if (openAICompactMode.value !== 'auto') {
     extra.openai_compact_mode = openAICompactMode.value
