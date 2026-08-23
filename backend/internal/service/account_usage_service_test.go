@@ -2,12 +2,381 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/stretchr/testify/require"
 )
+
+type quotaProbeScheduleTestCache struct {
+	ConcurrencyCache
+	mu      sync.Mutex
+	claimed bool
+	err     error
+	calls   int
+	delay   time.Duration
+}
+
+type openAIQuotaUsageStub struct {
+	calls atomic.Int32
+}
+
+type quotaProbeContextKey struct{}
+
+type quotaProbeContextSettingRepo struct {
+	SettingRepository
+	values   map[string]string
+	observed any
+}
+
+func (r *quotaProbeContextSettingRepo) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	r.observed = ctx.Value(quotaProbeContextKey{})
+	result := make(map[string]string, len(keys))
+	for _, key := range keys {
+		result[key] = r.values[key]
+	}
+	return result, nil
+}
+
+func (s *openAIQuotaUsageStub) QueryUsage(_ context.Context, _ int64) (*OpenAIQuotaUsage, error) {
+	s.calls.Add(1)
+	return &OpenAIQuotaUsage{}, nil
+}
+
+func (c *quotaProbeScheduleTestCache) TryClaimOpenAIQuotaProbe(_ context.Context, _ int64, _ time.Duration, _ string, _ time.Time) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	if c.delay > 0 {
+		time.Sleep(c.delay)
+	}
+	if c.err != nil {
+		return false, c.err
+	}
+	if c.claimed {
+		return false, nil
+	}
+	c.claimed = true
+	return true, nil
+}
+
+func TestJitteredOpenAIQuotaProbeIntervalBounds(t *testing.T) {
+	base := 10 * time.Minute
+	requireEqualDuration := func(want, got time.Duration) {
+		t.Helper()
+		if got != want {
+			t.Fatalf("interval = %s, want %s", got, want)
+		}
+	}
+	requireEqualDuration(7*time.Minute+30*time.Second, jitteredOpenAIQuotaProbeInterval(base, 0.25, 0))
+	requireEqualDuration(10*time.Minute, jitteredOpenAIQuotaProbeInterval(base, 0.25, 0.5))
+	requireEqualDuration(12*time.Minute+30*time.Second, jitteredOpenAIQuotaProbeInterval(base, 0.25, 1))
+}
+
+func TestAccountUsageServiceShouldProbeOpenAICodexSnapshotUsesAtomicJitteredSchedule(t *testing.T) {
+	settingSvc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAIQuotaProbeIntervalMinutes: "10",
+		SettingKeyOpenAIQuotaProbeJitterRatio:     "0.25",
+	}}, &config.Config{})
+	svc := &AccountUsageService{
+		cache:                 NewUsageCache(),
+		settingService:        settingSvc,
+		openAIProbeJitterUnit: func() float64 { return 0 },
+	}
+	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+
+	if !svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 77, now, time.Time{}, false) {
+		t.Fatal("first automatic probe should claim eligibility")
+	}
+	if svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 77, now.Add(7*time.Minute+29*time.Second), time.Time{}, false) {
+		t.Fatal("probe should remain gated before the -25% boundary")
+	}
+	if !svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 77, now.Add(7*time.Minute+30*time.Second), time.Time{}, false) {
+		t.Fatal("probe should become eligible at the -25% boundary")
+	}
+	if !svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 77, now.Add(time.Second), time.Time{}, true) {
+		t.Fatal("force=true must bypass the automatic schedule")
+	}
+}
+
+func TestAccountUsageServiceShouldProbeOpenAICodexSnapshotPreservesCallerContext(t *testing.T) {
+	repo := &quotaProbeContextSettingRepo{values: map[string]string{
+		SettingKeyOpenAIQuotaProbeIntervalMinutes: "10",
+		SettingKeyOpenAIQuotaProbeJitterRatio:     "0.25",
+	}}
+	svc := &AccountUsageService{
+		cache:          NewUsageCache(),
+		settingService: NewSettingService(repo, &config.Config{}),
+	}
+	ctx := context.WithValue(context.Background(), quotaProbeContextKey{}, "quota-probe-request")
+
+	if !svc.shouldProbeOpenAICodexSnapshotWithContext(ctx, 78, time.Now(), time.Time{}, false) {
+		t.Fatal("first automatic probe should claim eligibility")
+	}
+	if got, want := repo.observed, any("quota-probe-request"); got != want {
+		t.Fatalf("settings context value = %v, want %v", got, want)
+	}
+}
+
+func TestGetOpenAIUsageScheduleDuePreservesCallerContext(t *testing.T) {
+	repo := &quotaProbeContextSettingRepo{values: map[string]string{
+		SettingKeyOpenAIQuotaProbeIntervalMinutes: "10",
+		SettingKeyOpenAIQuotaProbeJitterRatio:     "0.25",
+	}}
+	now := time.Now().UTC()
+	account := &Account{
+		ID:       79,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			"codex_5h_used_percent":  10.0,
+			"codex_5h_reset_at":      now.Add(time.Hour).Format(time.RFC3339),
+			"codex_7d_used_percent":  20.0,
+			"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+			"codex_usage_updated_at": now.Format(time.RFC3339),
+		},
+	}
+	svc := &AccountUsageService{
+		cache:          NewUsageCache(),
+		settingService: NewSettingService(repo, &config.Config{}),
+	}
+	svc.cache.openAIProbeCache.Store(account.ID, &openAIProbeScheduleState{
+		nextProbeAt:  now.Add(-time.Minute),
+		baseInterval: 10 * time.Minute,
+		jitterRatio:  0.25,
+		initialized:  true,
+	})
+	ctx := context.WithValue(context.Background(), quotaProbeContextKey{}, "usage-request")
+
+	if _, err := svc.getOpenAIUsage(ctx, account, false); err != nil {
+		t.Fatalf("getOpenAIUsage() error = %v", err)
+	}
+	if got, want := repo.observed, any("usage-request"); got != want {
+		t.Fatalf("settings context value = %v, want %v", got, want)
+	}
+}
+
+func TestAccountUsageServiceShouldProbeOpenAICodexSnapshotAllowsOneConcurrentClaim(t *testing.T) {
+	svc := &AccountUsageService{cache: NewUsageCache()}
+	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	var claimed atomic.Int32
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 88, now, time.Time{}, false) {
+				claimed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := claimed.Load(); got != 1 {
+		t.Fatalf("concurrent claims = %d, want 1", got)
+	}
+}
+
+func TestAccountUsageServiceShouldProbeOpenAICodexSnapshotReclaimsChangedSchedule(t *testing.T) {
+	svc := &AccountUsageService{cache: NewUsageCache()}
+	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	svc.cache.openAIProbeCache.Store(int64(99), &openAIProbeScheduleState{
+		nextProbeAt:  now.Add(24 * time.Hour),
+		baseInterval: time.Hour,
+		jitterRatio:  0.25,
+		initialized:  true,
+	})
+
+	if !svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 99, now, time.Time{}, false) {
+		t.Fatal("changed interval must not remain blocked by an old far-future schedule")
+	}
+}
+
+func TestAccountUsageServiceQuotaScheduleForceBypassesDistributedClaim(t *testing.T) {
+	cache := &quotaProbeScheduleTestCache{}
+	svc := &AccountUsageService{
+		cache:              NewUsageCache(),
+		concurrencyService: NewConcurrencyService(cache),
+	}
+	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+
+	if !svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 101, now, time.Time{}, true) {
+		t.Fatal("force=true must bypass the automatic schedule")
+	}
+	if cache.calls != 0 {
+		t.Fatalf("distributed claim calls after force = %d, want 0", cache.calls)
+	}
+	if !svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 101, now, time.Time{}, false) {
+		t.Fatal("automatic claim must remain available after a forced probe")
+	}
+}
+
+func TestAccountUsageServiceQuotaScheduleFallsBackLocallyOnRedisError(t *testing.T) {
+	const redisDelay = 25 * time.Millisecond
+	distributed := &quotaProbeScheduleTestCache{err: errors.New("redis unavailable"), delay: redisDelay}
+	svc := &AccountUsageService{
+		cache:                 NewUsageCache(),
+		concurrencyService:    NewConcurrencyService(distributed),
+		openAIProbeJitterUnit: func() float64 { return 0.5 },
+	}
+	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	wallStart := time.Now()
+
+	if !svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 102, now, time.Time{}, false) {
+		t.Fatal("first probe must fail open through the local schedule")
+	}
+	if svc.shouldProbeOpenAICodexSnapshotWithContext(context.Background(), 102, now.Add(time.Second), time.Time{}, false) {
+		t.Fatal("local fallback must still suppress a duplicate probe")
+	}
+	if distributed.calls != 1 {
+		t.Fatalf("Redis calls during degraded backoff = %d, want 1", distributed.calls)
+	}
+	value, _ := svc.cache.openAIProbeCache.Load(int64(102))
+	state, ok := value.(*openAIProbeScheduleState)
+	require.True(t, ok)
+	minimumRetryAt := wallStart.Add(redisDelay + openAIQuotaProbeRedisRetryBackoff - 5*time.Millisecond)
+	if state.distributedRetryAt.Before(minimumRetryAt) {
+		t.Fatalf("degraded retry deadline = %s, want at least %s based on Redis failure time", state.distributedRetryAt, minimumRetryAt)
+	}
+}
+
+func TestGetOpenAIUsageProbesWhenConfiguredSchedulePredatesLegacyStaleness(t *testing.T) {
+	settingSvc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAIQuotaProbeIntervalMinutes: "1",
+		SettingKeyOpenAIQuotaProbeJitterRatio:     "0",
+	}}, &config.Config{})
+	now := time.Now().UTC()
+	parentID := int64(7001)
+	account := &Account{
+		ID:              7002,
+		Platform:        PlatformOpenAI,
+		Type:            AccountTypeOAuth,
+		ParentAccountID: &parentID,
+		QuotaDimension:  QuotaDimensionSpark,
+		Extra: map[string]any{
+			"codex_5h_used_percent":  10.0,
+			"codex_5h_reset_at":      now.Add(time.Hour).Format(time.RFC3339),
+			"codex_7d_used_percent":  20.0,
+			"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+			"codex_usage_updated_at": now.Add(-2 * time.Minute).Format(time.RFC3339),
+		},
+	}
+	quota := &openAIQuotaUsageStub{}
+	svc := &AccountUsageService{
+		cache:                 NewUsageCache(),
+		settingService:        settingSvc,
+		openAIProbeJitterUnit: func() float64 { return 0.5 },
+		openAIQuotaService:    quota,
+	}
+
+	if _, err := svc.getOpenAIUsage(context.Background(), account, false); err != nil {
+		t.Fatalf("getOpenAIUsage() error = %v", err)
+	}
+	if got := quota.calls.Load(); got != 1 {
+		t.Fatalf("quota probe calls = %d, want 1 for a two-minute-old snapshot on a one-minute schedule", got)
+	}
+	value, ok := svc.cache.openAIProbeCache.Load(account.ID)
+	if !ok {
+		t.Fatal("configured automatic schedule was not initialized")
+	}
+	state, ok := value.(*openAIProbeScheduleState)
+	if !ok || state == nil || !state.initialized {
+		t.Fatalf("schedule state = %#v, want initialized", value)
+	}
+}
+
+func TestGetOpenAIUsageColdScheduleDoesNotRepeatFreshProbe(t *testing.T) {
+	settingSvc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAIQuotaProbeIntervalMinutes: "10",
+		SettingKeyOpenAIQuotaProbeJitterRatio:     "0.25",
+	}}, &config.Config{})
+	now := time.Now().UTC()
+	parentID := int64(7101)
+	account := &Account{
+		ID:              7102,
+		Platform:        PlatformOpenAI,
+		Type:            AccountTypeOAuth,
+		ParentAccountID: &parentID,
+		QuotaDimension:  QuotaDimensionSpark,
+		Extra: map[string]any{
+			"codex_5h_used_percent":  10.0,
+			"codex_5h_reset_at":      now.Add(time.Hour).Format(time.RFC3339),
+			"codex_7d_used_percent":  20.0,
+			"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+			"codex_usage_updated_at": now.Add(-5 * time.Second).Format(time.RFC3339),
+		},
+	}
+	quota := &openAIQuotaUsageStub{}
+	svc := &AccountUsageService{
+		cache:                 NewUsageCache(),
+		settingService:        settingSvc,
+		openAIProbeJitterUnit: func() float64 { return 0.5 },
+		openAIQuotaService:    quota,
+	}
+
+	if _, err := svc.getOpenAIUsage(context.Background(), account, false); err != nil {
+		t.Fatalf("getOpenAIUsage() error = %v", err)
+	}
+	if got := quota.calls.Load(); got != 0 {
+		t.Fatalf("quota probe calls = %d, want 0 for a freshly persisted snapshot", got)
+	}
+}
+
+func TestGetOpenAIUsageColdSchedulesJitterInitialDeadlinesAcrossAccounts(t *testing.T) {
+	settingSvc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAIQuotaProbeIntervalMinutes: "10",
+		SettingKeyOpenAIQuotaProbeJitterRatio:     "0.25",
+	}}, &config.Config{})
+	updatedAt := time.Now().UTC().Truncate(time.Second)
+	parentID := int64(7200)
+	newAccount := func(id int64) *Account {
+		return &Account{
+			ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+			ParentAccountID: &parentID, QuotaDimension: QuotaDimensionSpark,
+			Extra: map[string]any{
+				"codex_5h_used_percent":  10.0,
+				"codex_5h_reset_at":      updatedAt.Add(time.Hour).Format(time.RFC3339),
+				"codex_7d_used_percent":  20.0,
+				"codex_7d_reset_at":      updatedAt.Add(24 * time.Hour).Format(time.RFC3339),
+				"codex_usage_updated_at": updatedAt.Format(time.RFC3339),
+			},
+		}
+	}
+	units := []float64{0, 1}
+	unitIndex := 0
+	svc := &AccountUsageService{
+		cache:          NewUsageCache(),
+		settingService: settingSvc,
+		openAIProbeJitterUnit: func() float64 {
+			unit := units[unitIndex]
+			unitIndex++
+			return unit
+		},
+		openAIQuotaService: &openAIQuotaUsageStub{},
+	}
+
+	for _, account := range []*Account{newAccount(7201), newAccount(7202)} {
+		if _, err := svc.getOpenAIUsage(context.Background(), account, false); err != nil {
+			t.Fatalf("getOpenAIUsage(%d) error = %v", account.ID, err)
+		}
+	}
+	valueA, _ := svc.cache.openAIProbeCache.Load(int64(7201))
+	valueB, _ := svc.cache.openAIProbeCache.Load(int64(7202))
+	stateA, ok := valueA.(*openAIProbeScheduleState)
+	require.True(t, ok)
+	stateB, ok := valueB.(*openAIProbeScheduleState)
+	require.True(t, ok)
+	deadlineA := stateA.nextProbeAt
+	deadlineB := stateB.nextProbeAt
+	if got, want := deadlineB.Sub(deadlineA), 5*time.Minute; got != want {
+		t.Fatalf("cold deadline spread = %s, want %s", got, want)
+	}
+}
 
 type accountUsageCodexProbeRepo struct {
 	stubOpenAIAccountRepo

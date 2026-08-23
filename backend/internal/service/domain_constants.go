@@ -668,6 +668,14 @@ const (
 	SettingKeyOpenAICodexUAPersonaEnabled = "openai_codex_ua_persona_enabled"
 	// SettingKeyOpenAICodexVersionStaggerMaxHours 自动同步版本的部署级最大错峰窗口（0-48h，默认 0）。
 	SettingKeyOpenAICodexVersionStaggerMaxHours = "openai_codex_version_stagger_max_hours"
+	// OpenAI OAuth traffic shaping. Pacing and thread caps default off; quota
+	// probing keeps the historical ten-minute base interval with 25% jitter.
+	SettingKeyOpenAIRequestPacingEnabled          = "openai_request_pacing_enabled"
+	SettingKeyOpenAIRequestPacingMinIntervalMS    = "openai_request_pacing_min_interval_ms"
+	SettingKeyOpenAIRequestPacingMaxIntervalMS    = "openai_request_pacing_max_interval_ms"
+	SettingKeyOpenAIAccountThreadConcurrencyLimit = "openai_account_thread_concurrency_limit"
+	SettingKeyOpenAIQuotaProbeIntervalMinutes     = "openai_quota_probe_interval_minutes"
+	SettingKeyOpenAIQuotaProbeJitterRatio         = "openai_quota_probe_jitter_ratio"
 	// SettingKeyOpenAIAllowClaudeCodeCodexPlugin 已废弃：历史全局开关只作为升级迁移输入读取。
 	// 迁移后等价规则写入 SettingKeyCodexCLIOnlyWhitelist，不再参与运行时判定。
 	SettingKeyOpenAIAllowClaudeCodeCodexPlugin = "openai_allow_claude_code_codex_plugin"
