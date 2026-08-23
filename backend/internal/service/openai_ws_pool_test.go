@@ -838,11 +838,11 @@ func TestOpenAIWSConnPool_AcquireRoutingHintRemainsSoftAffinity(t *testing.T) {
 	require.Equal(t, 1, dialer.DialCount())
 }
 
-func TestOpenAIWSConnPool_DeviceModeKeysOnlyInstallationIdentity(t *testing.T) {
+func TestOpenAIWSConnPool_DeviceModeKeysInstallationAndSessionIdentity(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 3
 	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
-	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 2
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 3
 
 	pool := newOpenAIWSConnPool(cfg)
 	dialer := &openAIWSCountingDialer{}
@@ -872,8 +872,8 @@ func TestOpenAIWSConnPool_DeviceModeKeysOnlyInstallationIdentity(t *testing.T) {
 		Headers: sessionChanged,
 	})
 	require.NoError(t, err)
-	require.True(t, second.Reused())
-	require.Equal(t, firstConnID, second.ConnID())
+	require.False(t, second.Reused())
+	require.NotEqual(t, firstConnID, second.ConnID())
 	second.Release()
 
 	installationChanged := sessionChanged.Clone()
@@ -887,7 +887,7 @@ func TestOpenAIWSConnPool_DeviceModeKeysOnlyInstallationIdentity(t *testing.T) {
 	require.False(t, third.Reused())
 	require.NotEqual(t, firstConnID, third.ConnID())
 	third.Release()
-	require.Equal(t, 2, dialer.DialCount())
+	require.Equal(t, 3, dialer.DialCount())
 }
 
 func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithDifferentBetaFeatures(t *testing.T) {
@@ -2460,4 +2460,29 @@ func TestOpenAIWSConnPool_SnapshotTransportMetrics(t *testing.T) {
 	require.Equal(t, int64(1), snapshot.ProxyClientCacheHits)
 	require.Equal(t, int64(2), snapshot.ProxyClientCacheMisses)
 	require.InDelta(t, 1.0/3.0, snapshot.TransportReuseRatio, 0.0001)
+}
+
+func TestNormalizeOpenAIWSHandshakeCompatibilitySeparatesNamespacedSessionsInAllModes(t *testing.T) {
+	for _, mode := range []codexFingerprintMode{codexFingerprintOff, codexFingerprintDevice} {
+		t.Run(string(mode), func(t *testing.T) {
+			account := newTestOAuthAccount(92, map[string]any{
+				codexFingerprintModeExtraKey: string(mode),
+				codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+			})
+			headersA := http.Header{
+				"User-Agent":              []string{codexCLIUserAgent},
+				"X-Codex-Installation-Id": []string{"same-installation"},
+				"Session-Id":              []string{deriveStableUUIDv7(testCodexFingerprintSeed + ":session-A")},
+				"Session_id":              []string{deriveStableUUIDv7(testCodexFingerprintSeed + ":session-A")},
+			}
+			headersB := headersA.Clone()
+			headersB.Set("session-id", deriveStableUUIDv7(testCodexFingerprintSeed+":session-B"))
+			headersB.Set("session_id", deriveStableUUIDv7(testCodexFingerprintSeed+":session-B"))
+
+			keyA := normalizeOpenAIWSHandshakeCompatibility(account, headersA, nil)
+			keyB := normalizeOpenAIWSHandshakeCompatibility(account, headersB, nil)
+
+			require.NotEqual(t, keyA, keyB)
+		})
+	}
 }

@@ -134,8 +134,8 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 	require.Equal(t, "account-agent-passthrough", req.Header.Get("chatgpt-account-id"))
 	require.NotEqual(t, "client-session", req.Header.Get("session_id"))
 	require.NotEqual(t, "client-conversation", req.Header.Get("conversation_id"))
-	require.Equal(t, isolateOpenAIUpstreamSessionID(0, account, "client-session"), req.Header.Get("session_id"))
-	require.Equal(t, isolateOpenAIUpstreamSessionID(0, account, "client-conversation"), req.Header.Get("conversation_id"))
+	require.Equal(t, isolateOpenAISessionID(0, "client-session"), req.Header.Get("session_id"))
+	require.Equal(t, isolateOpenAISessionID(0, "client-conversation"), req.Header.Get("conversation_id"))
 	requestBody, err := io.ReadAll(req.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(requestBody), `"prompt_cache_key":"cache-agent"`)
@@ -412,6 +412,7 @@ func TestOpenAIAgentIdentityCompatRoutesRecoverInvalidTaskOnce(t *testing.T) {
 					"task_id":            "task-compat-old",
 					"chatgpt_account_id": "account-compat-recovery",
 				},
+				Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 			}
 			repo := &agentIdentityForwardRepo{account: account}
 			registerCalls := 0
@@ -454,7 +455,10 @@ func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t
 			"agent_private_key": privateKey,
 			"task_id":           "task-cache-old",
 		},
-		Extra: map[string]any{"openai_responses_supported": true},
+		Extra: map[string]any{
+			"openai_responses_supported": true,
+			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+		},
 	}
 	repo := &agentIdentityForwardRepo{account: account}
 	registerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -483,7 +487,9 @@ func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t
 	secondKey := gjson.GetBytes(upstream.bodies[1], "prompt_cache_key").String()
 	require.NotEmpty(t, firstKey)
 	require.Equal(t, firstKey, secondKey)
-	require.Equal(t, generateSessionUUID(isolateOpenAIUpstreamSessionID(99, codexAccountIdentitySource(c, account), firstKey)), upstream.requests[0].Header.Get("session_id"))
+	seed, ok := codexFingerprintSeed(account.Extra)
+	require.True(t, ok)
+	require.Equal(t, resolveNamespacedCodexSessionID(seed, firstKey), upstream.requests[0].Header.Get("session_id"))
 	require.Equal(t, upstream.requests[0].Header.Get("session_id"), upstream.requests[1].Header.Get("session_id"))
 }
 
