@@ -525,7 +525,7 @@ export default {
         openaiCodexVersionAutoSyncHint: 'Fetches the latest stable client version from the official repository every 6 hours, so you never need to upgrade this service just to keep the version current. When disabled, only the version above or the built-in default is used.',
         openaiCodexVersionSyncedValue: 'Currently synced: {version}',
         codexRectifierTitle: 'Codex Identity Rectifier',
-        codexRectifierDescription: 'Controls the device pool, UA personas, and version-adoption staggering for converged OpenAI OAuth accounts. Defaults preserve existing outbound behavior.',
+        codexRectifierDescription: 'Controls the device pool for converged OpenAI OAuth and API Key accounts, plus OAuth UA personas and version-adoption staggering. Defaults preserve existing outbound behavior.',
         codexDevicePoolSize: 'Device pool size',
         codexDevicePoolSizeHint: 'Only 1 or 3–8 is allowed. 1 disables the platform pool and preserves the current single-device identity. Devices are created lazily by the ratio below; later expansion fills on new users and may move some users to new devices.',
         codexDevicePoolMigrationWarning: 'Migration warning: single-device and persisted-pool identities are incompatible. Enabling a pool rotates every user identity once; historical slot 0 is unreachable in the new pool. Introducing a persisted RootSession can also rotate a thread identity once.',

@@ -69,6 +69,8 @@ vi.mock('vue-i18n', async () => {
 })
 
 import CreateAccountModal from '../CreateAccountModal.vue'
+import enAccounts from '@/i18n/locales/en/admin/accounts'
+import zhAccounts from '@/i18n/locales/zh/admin/accounts'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -367,6 +369,62 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(wrapper.find('[data-testid="create-openai-flatten-namespaces-toggle"]').exists()).toBe(
       false
     )
+  })
+
+  it('shows and submits Codex fingerprint convergence for OpenAI API key accounts', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+
+    const modeSelect = wrapper.getComponent('[data-testid="create-codex-fingerprint-mode-select"]')
+    modeSelect.vm.$emit('update:modelValue', 'session')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('OpenAI converged key')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-converged')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.codex_fingerprint_mode).toBe('session')
+  })
+
+  it('shows and submits account-scoped non-Codex pi normalization for OpenAI API keys', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+
+    const policySelect = wrapper.getComponent('[data-testid="create-non-codex-traffic-policy-select"]')
+    policySelect.vm.$emit('update:modelValue', 'pi')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('OpenAI relay key')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-relay')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.non_codex_traffic_policy).toBe('pi')
+  })
+
+  it('documents API key third-party relay guidance for non-Codex traffic in both locales', () => {
+    const enDescription = enAccounts.accounts.openai.nonCodexTrafficPolicyDesc
+    const zhDescription = zhAccounts.accounts.openai.nonCodexTrafficPolicyDesc
+
+    expect(enDescription).toContain('API Key')
+    expect(enDescription).toContain('third-party relay')
+    expect(zhDescription).toContain('API Key')
+    expect(zhDescription).toContain('第三方中转')
+  })
+
+  it('documents off compatibility and third-party relay guidance in both locales', () => {
+    const enDescription = enAccounts.accounts.openai.codexFingerprintModeDesc
+    const zhDescription = zhAccounts.accounts.openai.codexFingerprintModeDesc
+
+    expect(enDescription).toContain('OAuth Off keeps account-scoped session namespacing')
+    expect(enDescription).toContain('API Key Off does not enable fingerprint convergence')
+    expect(enDescription).toContain('preserves existing endpoint-specific session handling')
+    expect(enDescription).toContain('Enable only when the upstream is a third-party relay')
+    expect(zhDescription).toContain('OAuth 的关闭模式保留账号级 session 命名空间')
+    expect(zhDescription).toContain('API Key 的关闭模式不启用新增的指纹收敛')
+    expect(zhDescription).toContain('保留各入口既有的 session 兼容行为')
+    expect(zhDescription).toContain('仅上游为第三方中转时建议开启')
   })
 
   it('enables upstream billing probes by default for new OpenAI API key accounts', async () => {
