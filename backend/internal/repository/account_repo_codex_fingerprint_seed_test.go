@@ -48,9 +48,17 @@ func TestUpdateExtraEnsuresCodexFingerprintSeedAtomicallyWhenEnabling(t *testing
 	t.Cleanup(func() { _ = db.Close() })
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	t.Cleanup(func() { _ = client.Close() })
+	wantSeed, ok := service.DeriveCodexFingerprintSeed(service.PlatformOpenAI, service.AccountTypeOAuth, map[string]any{
+		"chatgpt_account_id": "acct-update-extra",
+	})
+	require.True(t, ok)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`(?s)UPDATE accounts SET extra = .*jsonb_set.*gen_random_uuid\(\)::text.*WHERE id = \$2 AND deleted_at IS NULL`).
+	mock.ExpectQuery(`(?s)SELECT platform, type, COALESCE\(credentials::text, '\{\}'\) FROM accounts WHERE id = \$1 AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(int64(27)).
+		WillReturnRows(sqlmock.NewRows([]string{"platform", "type", "credentials"}).
+			AddRow("openai", "oauth", `{"chatgpt_account_id":"acct-update-extra"}`))
+	mock.ExpectExec(`(?s)UPDATE accounts SET extra = .*jsonb_set.*`+regexp.QuoteMeta(wantSeed)+`.*gen_random_uuid\(\)::text.*WHERE id = \$2 AND deleted_at IS NULL`).
 		WithArgs(`{"codex_fingerprint_mode":"device"}`, int64(27)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
@@ -68,6 +76,132 @@ func TestUpdateExtraEnsuresCodexFingerprintSeedAtomicallyWhenEnabling(t *testing
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestEnsureCodexFingerprintSeedReturnsAtomicallyCreatedSeed(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT platform, type, COALESCE\(credentials::text, '\{\}'\) FROM accounts WHERE id = \$1 AND deleted_at IS NULL FOR UPDATE`).
+		WithArgs(int64(27)).
+		WillReturnRows(sqlmock.NewRows([]string{"platform", "type", "credentials"}).AddRow("openai", "oauth", "{}"))
+	mock.ExpectQuery(`(?s)UPDATE accounts SET extra = .*gen_random_uuid\(\)::text.*WHERE id = \$1.*platform = 'openai'.*type = 'oauth'.*NOT COALESCE\(.*false\).*RETURNING extra ->> 'codex_fingerprint_seed'`).
+		WithArgs(int64(27)).
+		WillReturnRows(sqlmock.NewRows([]string{"seed"}).AddRow("33333333-3333-4333-8333-333333333333"))
+	mock.ExpectCommit()
+
+	seed, err := repo.EnsureCodexFingerprintSeed(context.Background(), 27)
+
+	require.NoError(t, err)
+	require.Equal(t, "33333333-3333-4333-8333-333333333333", seed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestEnsureCodexFingerprintSeedDoesNotSilentlyRandomizeOnIdentityReadFailure(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+	expected := errors.New("identity read failed")
+
+	mock.ExpectQuery(`SELECT platform, type, COALESCE\(credentials::text, '{}'\) FROM accounts WHERE id = \$1`).
+		WithArgs(int64(27)).
+		WillReturnError(expected)
+
+	_, err = repo.EnsureCodexFingerprintSeed(context.Background(), 27)
+
+	require.ErrorIs(t, err, expected)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBulkUpdateDerivesSeedCandidatesInsideLockedTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	wantA, ok := service.DeriveCodexFingerprintSeed(service.PlatformOpenAI, service.AccountTypeOAuth, map[string]any{"chatgpt_account_id": "bulk-a"})
+	require.True(t, ok)
+	wantB, ok := service.DeriveCodexFingerprintSeed(service.PlatformOpenAI, service.AccountTypeAPIKey, map[string]any{"api_key": "bulk-key"})
+	require.True(t, ok)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT id, platform, type, COALESCE\(credentials::text, '\{\}'\) FROM accounts WHERE id = ANY\(\$1\) AND deleted_at IS NULL ORDER BY id FOR UPDATE`).
+		WithArgs(`{27,28}`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "platform", "type", "credentials"}).
+			AddRow(int64(27), "openai", "oauth", `{"chatgpt_account_id":"bulk-a"}`).
+			AddRow(int64(28), "openai", "apikey", `{"api_key":"bulk-key"}`))
+	mock.ExpectExec(`(?s)UPDATE accounts SET extra = .*CASE id WHEN 27 THEN '`+regexp.QuoteMeta(wantA)+`'::text WHEN 28 THEN '`+regexp.QuoteMeta(wantB)+`'::text ELSE NULL END.*WHERE id = ANY\(\$2\)`).
+		WithArgs(sqlmock.AnyArg(), `{27,28}`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	rows, err := repo.BulkUpdate(context.Background(), []int64{27, 28}, service.AccountBulkUpdate{
+		Extra:                      map[string]any{"codex_fingerprint_mode": "session"},
+		EnsureCodexFingerprintSeed: true,
+	})
+
+	require.NoError(t, err)
+	require.Zero(t, rows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestEnsureAccountExtraValueReturnsExistingFirstWriterWinner(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+
+	mock.ExpectQuery(`(?s)UPDATE accounts SET extra = jsonb_set.*AND NOT .* \? \$2.*RETURNING extra -> \$2`).
+		WithArgs(int64(27), "codex_ua_persona", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"value"}))
+	mock.ExpectQuery(`(?s)SELECT extra -> \$2 FROM accounts WHERE id = \$1`).
+		WithArgs(int64(27), "codex_ua_persona").
+		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"platform":"windows","sandbox":"none"}`)))
+
+	winner, err := repo.EnsureAccountExtraValue(context.Background(), 27, "codex_ua_persona", map[string]any{
+		"platform": "mac",
+		"sandbox":  "seatbelt",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"platform": "windows", "sandbox": "none"}, winner)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCompareAndSwapAccountExtraValueReturnsConcurrentWinner(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := newAccountRepositoryWithSQL(nil, db, nil)
+
+	mock.ExpectQuery(`(?s)UPDATE accounts SET extra = jsonb_set.*COALESCE\(extra -> \$2, 'null'::jsonb\) = \$3::jsonb.*RETURNING extra -> \$2`).
+		WithArgs(int64(27), "codex_device_pool", "null", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"value"}))
+	mock.ExpectQuery(`(?s)SELECT extra -> \$2 FROM accounts WHERE id = \$1`).
+		WithArgs(int64(27), "codex_device_pool").
+		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"version":1,"next_slot":2,"slots":[{"id":1,"platform":"mac","sandbox":"seatbelt","created_for":"101"}]}`)))
+
+	winner, swapped, err := repo.CompareAndSwapAccountExtraValue(
+		context.Background(), 27, "codex_device_pool", nil,
+		map[string]any{"version": 1, "next_slot": 2},
+	)
+
+	require.NoError(t, err)
+	require.False(t, swapped)
+	require.Equal(t, map[string]any{
+		"version": float64(1), "next_slot": float64(2),
+		"slots": []any{map[string]any{
+			"id": float64(1), "platform": "mac", "sandbox": "seatbelt", "created_for": "101",
+		}},
+	}, winner)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestBulkUpdateCodexFingerprintSeedRollsBackWhenUpdateFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -76,6 +210,9 @@ func TestBulkUpdateCodexFingerprintSeedRollsBackWhenUpdateFails(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT id, platform, type, COALESCE\(credentials::text, '\{\}'\) FROM accounts WHERE id = ANY\(\$1\).*FOR UPDATE`).
+		WithArgs(`{27,28}`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "platform", "type", "credentials"}))
 	mock.ExpectExec(`(?s)UPDATE accounts SET extra = .*gen_random_uuid\(\)::text.*WHERE id = ANY\(\$2\)`).
 		WithArgs(sqlmock.AnyArg(), `{27,28}`).
 		WillReturnError(errors.New("update failed"))
@@ -102,6 +239,9 @@ func TestBulkUpdateCodexFingerprintSeedRollsBackWhenOutboxFails(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT id, platform, type, COALESCE\(credentials::text, '\{\}'\) FROM accounts WHERE id = ANY\(\$1\).*FOR UPDATE`).
+		WithArgs(`{27,28}`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "platform", "type", "credentials"}))
 	mock.ExpectExec(`(?s)UPDATE accounts SET extra = .*gen_random_uuid\(\)::text.*WHERE id = ANY\(\$2\)`).
 		WithArgs(sqlmock.AnyArg(), `{27,28}`).
 		WillReturnResult(sqlmock.NewResult(0, 2))

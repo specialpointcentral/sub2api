@@ -2272,7 +2272,8 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 		// 指纹收敛：探测与真实转发走同一个 /responses 端点，身份也必须同构，
 		// 否则探测流量会以「缺 x-codex-installation-id + 非收敛 session」的
-		// 形态暴露在上游眼里。账号关闭收敛（off）时返回 nil，探测保持原样。
+		// 形态暴露在上游眼里。off 模式不会收敛设备指纹，但账号已有系统 seed 时
+		// 仍会把探测 session 放入账号命名空间；没有 seed 才返回 nil 并保持原样。
 		if fpIDs := resolveCodexFingerprintIDsFromRequest(account, req.Header); fpIDs != nil {
 			applyCodexFingerprintHeaders(req.Header, fpIDs)
 		}
