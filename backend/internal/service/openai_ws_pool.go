@@ -77,6 +77,7 @@ type openAIWSAcquireRequest struct {
 }
 
 type openAIWSHandshakeCompatibilityKey struct {
+	userAgent           string
 	betaFeatures        string
 	codexInstallationID string
 	sessionIDHyphen     string
@@ -2020,6 +2021,7 @@ func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
 
 func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Header) openAIWSHandshakeCompatibilityKey {
 	key := openAIWSHandshakeCompatibilityKey{
+		userAgent:    normalizeOpenAIWSStableIdentityHeader(headers, "user-agent"),
 		betaFeatures: normalizeOpenAIWSBetaFeatures(headers),
 	}
 	mode := activeCodexFingerprintMode(account)
