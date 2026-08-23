@@ -321,6 +321,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			return nil, fmt.Errorf("apply grok Free function-tool cache route: %w", patchErr)
 		}
 	}
+	responsesBody, err = s.applyOpenAINonCodexPiHTTPProjection(c, account, responsesBody)
+	if err != nil {
+		return nil, fmt.Errorf("apply pi-normalize HTTP projection: %w", err)
+	}
 
 	// 5. Get access token
 	token, _, err := s.getRequestCredential(ctx, c, account)
@@ -374,6 +378,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 	if compatTurnState != "" && upstreamReq.Header.Get("x-codex-turn-state") == "" {
 		upstreamReq.Header.Set("x-codex-turn-state", compatTurnState)
+	}
+	if projection := stagedOpenAINonCodexPiProjection(c); projection != nil {
+		applyOpenAINonCodexPiHeadersProjection(upstreamReq.Header, *projection)
 	}
 
 	// 7. Send request
