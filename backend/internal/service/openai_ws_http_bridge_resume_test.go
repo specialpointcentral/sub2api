@@ -253,11 +253,111 @@ func TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount(t 
 	}
 	require.Len(t, upstream.bodies, 3)
 	require.Contains(t, string(upstream.bodies[0]), "first")
-	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "session", "client-session"), gjson.GetBytes(upstream.bodies[1], "client_metadata.session_id").String())
-	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "thread", "client-thread"), gjson.GetBytes(upstream.bodies[1], "client_metadata.thread_id").String())
+	// WS HTTP bridge 逐 turn 重放路径不经收敛/账号命名空间改写（与站点既有行为一致），
+	// client_metadata 按客户端原样透传。
+	require.Equal(t, "client-session", gjson.GetBytes(upstream.bodies[1], "client_metadata.session_id").String())
+	require.Equal(t, "client-thread", gjson.GetBytes(upstream.bodies[1], "client_metadata.thread_id").String())
 	require.NotContains(t, string(upstream.bodies[2]), "previous_response_id")
 	require.Contains(t, string(upstream.bodies[2]), "second")
-	require.Equal(t, scopeCodexAccountIdentityValue(&nextAccount, 0, "session", "client-session"), gjson.GetBytes(upstream.bodies[2], "client_metadata.session_id").String())
-	require.Equal(t, scopeCodexAccountIdentityValue(&nextAccount, 0, "thread", "client-thread"), gjson.GetBytes(upstream.bodies[2], "client_metadata.thread_id").String())
+	require.Equal(t, "client-session", gjson.GetBytes(upstream.bodies[2], "client_metadata.session_id").String())
+	require.Equal(t, "client-thread", gjson.GetBytes(upstream.bodies[2], "client_metadata.thread_id").String())
 	require.Empty(t, upstream.requests[2].Header.Get(openAIWSTurnStateHeader))
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurnConvergesIdentityPerAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newSuccessResp := func(id string) *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"" + id + "\",\"output\":[{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+			)),
+		}
+	}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newSuccessResp("resp_a1"), newSuccessResp("resp_b1"), newSuccessResp("resp_a2"),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+	newAccount := func(id int64, seed string) *Account {
+		return &Account{
+			ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+			Extra: map[string]any{
+				codexFingerprintModeExtraKey: string(codexFingerprintSession),
+				codexFingerprintSeedExtraKey: seed,
+			},
+			Credentials: map[string]any{"access_token": "token"},
+		}
+	}
+	accountA := newAccount(1410, "11111111-1111-4111-8111-111111111111")
+	accountB := newAccount(1411, "22222222-2222-4222-8222-222222222222")
+	payload := []byte(`{"type":"response.create","model":"gpt-5.6-sol","prompt_cache_key":"client-session","client_metadata":{"session_id":"client-session","thread_id":"client-thread"},"input":[{"role":"user","content":"hi"}]}`)
+
+	runTurn := func(account *Account) []byte {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+			context.Background(), c, account, "access-token", payload, len(payload),
+			"gpt-5.6-sol", "", "", "", "", 1,
+			func([]byte) error { return nil },
+		)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		return upstream.bodies[len(upstream.bodies)-1]
+	}
+
+	bodyA1 := runTurn(accountA)
+	bodyB := runTurn(accountB)
+	bodyA2 := runTurn(accountA)
+
+	sessionA1 := gjson.GetBytes(bodyA1, "client_metadata.session_id").String()
+	sessionB := gjson.GetBytes(bodyB, "client_metadata.session_id").String()
+	sessionA2 := gjson.GetBytes(bodyA2, "client_metadata.session_id").String()
+	require.NotEmpty(t, sessionA1)
+	require.NotEqual(t, "client-session", sessionA1, "converged accounts must not leak the client-original session")
+	require.Equal(t, sessionA1, sessionA2, "same account must derive the same session identity across turns")
+	require.NotEqual(t, sessionA1, sessionB, "failover to a replacement account must rotate the session identity")
+	threadA := gjson.GetBytes(bodyA1, "client_metadata.thread_id").String()
+	threadB := gjson.GetBytes(bodyB, "client_metadata.thread_id").String()
+	require.NotEqual(t, "client-thread", threadA)
+	require.NotEqual(t, threadA, threadB)
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurnOffModePreservesClientMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_off\",\"output\":[{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+		)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	// A historical seed left over after disabling convergence must not reactivate
+	// any client_metadata rewrite on the bridge path either.
+	account := &Account{
+		ID: 1412, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+		Extra:       map[string]any{codexFingerprintSeedExtraKey: "33333333-3333-4333-8333-333333333333"},
+		Credentials: map[string]any{"access_token": "token"},
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	payload := []byte(`{"type":"response.create","model":"gpt-5.6-sol","prompt_cache_key":"client-session","client_metadata":{"session_id":"client-session","thread_id":"client-thread"},"input":[{"role":"user","content":"hi"}]}`)
+
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(), c, account, "access-token", payload, len(payload),
+		"gpt-5.6-sol", "", "", "", "", 1,
+		func([]byte) error { return nil },
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "client-session", gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
+	require.Equal(t, "client-thread", gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
+	require.Equal(t, "client-session", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -69,26 +70,301 @@ const (
 	// 被暂停的账号收不到流量，其快照永远不会从上游响应头刷新；该兜底让账号在快照
 	// 陈旧时放行一次请求，从而通过正常响应头自愈，而无需等待整个窗口（5h/7d）重置。
 	openAICodexAutoPauseStaleAfter = 2 * time.Hour
+
+	codexDevicePoolCASMaxAttempts       = 8
+	codexDevicePoolCASBackoffInitial    = 2 * time.Millisecond
+	codexDevicePoolCASBackoffMax        = 32 * time.Millisecond
+	codexDevicePoolMalformedLogInterval = time.Minute
 )
+
+type codexFingerprintStateRepository interface {
+	EnsureCodexFingerprintSeed(ctx context.Context, accountID int64) (string, error)
+	EnsureAccountExtraValue(ctx context.Context, accountID int64, key string, value any) (any, error)
+}
+
+type codexDevicePoolStateRepository interface {
+	CompareAndSwapAccountExtraValue(ctx context.Context, accountID int64, key string, expected, replacement any) (winner any, swapped bool, err error)
+}
+
+type CodexDevicePoolMetricsSnapshot struct {
+	ConflictTotal       int64 `json:"conflict_total"`
+	RetryTotal          int64 `json:"retry_total"`
+	ExhaustedTotal      int64 `json:"exhausted_total"`
+	MalformedStateTotal int64 `json:"malformed_state_total"`
+}
+
+type codexDevicePoolMetrics struct {
+	conflict       atomic.Int64
+	retry          atomic.Int64
+	exhausted      atomic.Int64
+	malformedState atomic.Int64
+}
+
+func (s *OpenAIGatewayService) SnapshotCodexDevicePoolMetrics() CodexDevicePoolMetricsSnapshot {
+	if s == nil {
+		return CodexDevicePoolMetricsSnapshot{}
+	}
+	return CodexDevicePoolMetricsSnapshot{
+		ConflictTotal:       s.codexDevicePoolMetrics.conflict.Load(),
+		RetryTotal:          s.codexDevicePoolMetrics.retry.Load(),
+		ExhaustedTotal:      s.codexDevicePoolMetrics.exhausted.Load(),
+		MalformedStateTotal: s.codexDevicePoolMetrics.malformedState.Load(),
+	}
+}
+
+func (s *OpenAIGatewayService) recordMalformedCodexDevicePoolState(accountID int64) {
+	if s == nil {
+		return
+	}
+	s.codexDevicePoolMetrics.malformedState.Add(1)
+	throttle := s.codexDevicePoolMalformedLogRate
+	if throttle == nil {
+		throttle = defaultCodexDevicePoolMalformedLogRate
+	}
+	if throttle.Allow(accountID, time.Now()) {
+		slog.Warn("openai_codex_device_pool_state_malformed",
+			"account_id", accountID,
+			"extra_key", codexDevicePoolExtraKey,
+			"action", "fail_closed",
+		)
+	}
+}
+
+func codexDevicePoolCASRetryDelay(attempt int) time.Duration {
+	delay := codexDevicePoolCASBackoffInitial
+	for range attempt {
+		if delay >= codexDevicePoolCASBackoffMax/2 {
+			delay = codexDevicePoolCASBackoffMax
+			break
+		}
+		delay *= 2
+	}
+	// A +/-25% jitter prevents cold-start writers from repeatedly colliding in lockstep.
+	spread := delay / 4
+	if spread <= 0 {
+		return delay
+	}
+	return delay - spread + time.Duration(rand.Int63n(int64(2*spread)+1))
+}
+
+func waitCodexDevicePoolCASRetry(ctx context.Context, attempt int) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(codexDevicePoolCASRetryDelay(attempt))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (s *OpenAIGatewayService) ensureCodexDevicePoolSlot(ctx context.Context, account *Account, observed codexUAPersonaSelection, userID int64, clientSessionID string, quotas codexDevicePlatformQuotas) (codexDeviceSlot, error) {
+	if account == nil {
+		return codexDeviceSlot{}, errors.New("cannot bind codex device slot without account")
+	}
+	repo, ok := s.accountRepo.(codexDevicePoolStateRepository)
+	if !ok {
+		return codexDeviceSlot{}, errors.New("account repository cannot persist codex device pool")
+	}
+	var current any
+	if account.Extra != nil {
+		current = account.Extra[codexDevicePoolExtraKey]
+	}
+	seed, _ := codexFingerprintSeed(account.Extra)
+	resolve := func(value any) (codexDevicePoolState, codexDeviceSlot, bool, error) {
+		state, valid := canonicalCodexDevicePoolState(value)
+		if !valid {
+			s.recordMalformedCodexDevicePoolState(account.ID)
+			return codexDevicePoolState{}, codexDeviceSlot{}, false, errors.New("account contains malformed codex device pool state")
+		}
+		next, _, changed := bindCodexDevicePoolSlot(state, observed, userID, quotas)
+		slot := codexRendezvousPoolSlotForPlatform(seed, userID, observed.Platform, next.Slots)
+		if slot.ID == 0 {
+			return codexDevicePoolState{}, codexDeviceSlot{}, false, errors.New("codex device platform has no available quota")
+		}
+		var rootChanged bool
+		next, slot, rootChanged = setCodexDeviceSlotRoot(next, slot.ID, clientSessionID)
+		return next, slot, changed || rootChanged, nil
+	}
+
+	for attempt := 0; attempt < codexDevicePoolCASMaxAttempts; attempt++ {
+		next, slot, changed, err := resolve(current)
+		if err != nil {
+			return codexDeviceSlot{}, err
+		}
+		if !changed {
+			return slot, nil
+		}
+		winner, swapped, err := repo.CompareAndSwapAccountExtraValue(ctx, account.ID, codexDevicePoolExtraKey, current, next)
+		if err != nil {
+			return codexDeviceSlot{}, fmt.Errorf("persist codex device pool: %w", err)
+		}
+		if swapped {
+			return slot, nil
+		}
+		s.codexDevicePoolMetrics.conflict.Add(1)
+		current = winner
+		if attempt == codexDevicePoolCASMaxAttempts-1 {
+			_, winnerSlot, winnerChanged, winnerErr := resolve(current)
+			if winnerErr != nil {
+				return codexDeviceSlot{}, winnerErr
+			}
+			if !winnerChanged {
+				return winnerSlot, nil
+			}
+			s.codexDevicePoolMetrics.exhausted.Add(1)
+			return codexDeviceSlot{}, errors.New("codex device pool update did not converge")
+		}
+		s.codexDevicePoolMetrics.retry.Add(1)
+		if err := waitCodexDevicePoolCASRetry(ctx, attempt); err != nil {
+			return codexDeviceSlot{}, fmt.Errorf("retry codex device pool update: %w", err)
+		}
+	}
+	panic("unreachable")
+}
+
+func (s *OpenAIGatewayService) withEnsuredCodexFingerprintSeed(ctx context.Context, account *Account) (*Account, error) {
+	if account == nil || !account.IsOpenAIOAuth() {
+		return account, nil
+	}
+	if _, ok := codexFingerprintSeed(account.Extra); ok {
+		return account, nil
+	}
+	if s == nil {
+		return nil, errors.New("cannot ensure codex fingerprint seed without gateway service")
+	}
+	stateRepo, ok := s.accountRepo.(codexFingerprintStateRepository)
+	if !ok {
+		return nil, errors.New("account repository cannot ensure codex fingerprint seed")
+	}
+	seed, err := stateRepo.EnsureCodexFingerprintSeed(ctx, account.ID)
+	if err != nil {
+		return nil, fmt.Errorf("ensure codex fingerprint seed: %w", err)
+	}
+	seed, ok = canonicalCodexFingerprintSeed(seed)
+	if !ok {
+		return nil, errors.New("account repository returned malformed codex fingerprint seed")
+	}
+
+	accountCopy := *account
+	accountCopy.Extra = maps.Clone(account.Extra)
+	if accountCopy.Extra == nil {
+		accountCopy.Extra = make(map[string]any, 1)
+	}
+	accountCopy.Extra[codexFingerprintSeedExtraKey] = seed
+	return &accountCopy, nil
+}
 
 // resolveCodexFingerprintIDsForOutbound 为本 attempt 解析收敛 ID，并按最终出站
 // User-Agent 固化 sandbox。body 与 header 随后共享同一份 IDs，避免两条载体
-// 分别猜测 OS 后产生 metadata 漂移。
-func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(account *Account, clientHeaders http.Header, enforceIdentity bool) *codexFingerprintIDs {
-	ids := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
-	if ids == nil {
-		return nil
+// 分别猜测 OS 后产生 metadata 漂移。persona 开启时，首笔真实请求观测到的
+// 合法 OS/sandbox 组合以账号 extra 原子 first-writer-wins 冻结；无法观测时
+// 才按账号 seed 加权回退。
+func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(c *gin.Context, account *Account, clientHeaders http.Header, enforceIdentity bool) (*codexFingerprintIDs, error) {
+	account = codexAccountIdentitySource(c, account)
+	if account == nil || !account.IsOpenAIOAuth() {
+		return nil, nil
+	}
+	requestCtx := context.Background()
+	userID := int64(0)
+	poolSize := 1
+	platformRatio := codexDevicePlatformRatio{Mac: 1, Windows: 1, Linux: 2}
+	personaEnabled := false
+	if c != nil && c.Request != nil {
+		requestCtx = c.Request.Context()
+		userID = Sub2APIUserIDFromContext(c.Request.Context())
+		if s != nil && s.settingService != nil {
+			poolSize = s.settingService.GetOpenAICodexDevicePoolSize(c.Request.Context())
+			platformRatio = s.settingService.GetOpenAICodexDevicePoolPlatformRatio(c.Request.Context())
+			personaEnabled = s.settingService.GetOpenAICodexUAPersonaEnabled(c.Request.Context())
+		}
 	}
 
 	userAgent := ""
 	if clientHeaders != nil {
 		userAgent = strings.TrimSpace(clientHeaders.Get("user-agent"))
 	}
-	if customUA := strings.TrimSpace(account.GetOpenAIUserAgent()); customUA != "" {
+	customUA := strings.TrimSpace(account.GetOpenAIUserAgent())
+	if customUA != "" {
 		userAgent = customUA
 	}
-	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+	forceCodexCLI := s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI
+	personaEligible := personaEnabled && customUA == "" && !forceCodexCLI && account != nil && account.IsOpenAIOAuth()
+	needsFingerprintSeed := codexFingerprintModeRequiresSeed(account.GetCodexFingerprintMode()) ||
+		personaEligible || extractClientSessionID(clientHeaders) != ""
+	if !needsFingerprintSeed {
+		return nil, nil
+	}
+	resolvedAccount, err := s.withEnsuredCodexFingerprintSeed(requestCtx, account)
+	if err != nil {
+		return nil, err
+	}
+	if resolvedAccount == nil {
+		return nil, nil
+	}
+
+	deviceSlot := 0
+	poolSelection := codexUAPersonaSelection{}
+	poolRootSession := ""
+	mode := resolvedAccount.GetCodexFingerprintMode()
+	if poolSize >= 3 && (mode != codexFingerprintOff || personaEnabled) {
+		poolSelection, _ = observedCodexUAPersonaSelection(clientHeaders)
+		if poolSelection.Platform == "" {
+			seed, _ := codexFingerprintSeed(resolvedAccount.Extra)
+			poolSelection = weightedCodexUAPersonaSelection(seed + ":user:" + codexDevicePoolUserKey(userID))
+		}
+		slot, bindErr := s.ensureCodexDevicePoolSlot(requestCtx, resolvedAccount, poolSelection, userID, extractClientSessionID(clientHeaders), allocateCodexDevicePlatformQuotas(poolSize, platformRatio))
+		if bindErr != nil {
+			return nil, bindErr
+		}
+		deviceSlot = slot.ID
+		poolRootSession = slot.RootSession
+		poolSelection = codexUAPersonaSelection{Platform: slot.Platform, Sandbox: slot.Sandbox}
+	}
+	clientSessionID := extractClientSessionID(clientHeaders)
+	ids := resolveCodexFingerprintIDsForDeviceSlotWithRoot(resolvedAccount, clientSessionID, mode, deviceSlot, poolRootSession)
+	if ids == nil {
+		return nil, nil
+	}
+
+	if forceCodexCLI {
 		userAgent = CodexCanonicalUserAgent()
+	} else if personaEligible {
+		if deviceSlot > 0 {
+			ids.userAgent = buildCodexPersonaUserAgent(poolSelection.Platform, CodexCanonicalClientVersion())
+			ids.sandbox = poolSelection.Sandbox
+			userAgent = ids.userAgent
+		} else {
+			selection, frozen := canonicalCodexUAPersonaSelection(resolvedAccount.Extra[codexUAPersonaExtraKey])
+			if !frozen {
+				selection, frozen = observedCodexUAPersonaSelection(clientHeaders)
+				if !frozen {
+					seed, seedOK := codexFingerprintSeed(resolvedAccount.Extra)
+					if seedOK {
+						selection = weightedCodexUAPersonaSelection(seed)
+						frozen = true
+					}
+				}
+				if frozen {
+					stateRepo, stateOK := s.accountRepo.(codexFingerprintStateRepository)
+					if !stateOK {
+						frozen = false
+					} else if winner, err := stateRepo.EnsureAccountExtraValue(requestCtx, account.ID, codexUAPersonaExtraKey, selection.extraValue()); err != nil {
+						frozen = false
+					} else {
+						selection, frozen = canonicalCodexUAPersonaSelection(winner)
+					}
+				}
+			}
+			if frozen {
+				ids.userAgent = buildCodexPersonaUserAgent(selection.Platform, CodexCanonicalClientVersion())
+				ids.sandbox = selection.Sandbox
+				userAgent = ids.userAgent
+			}
+		}
 	}
 	if enforceIdentity {
 		headers := make(http.Header)
@@ -96,11 +372,17 @@ func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(account *Ac
 		if userAgent != "" {
 			headers.Set("user-agent", userAgent)
 		}
-		enforceCodexIdentityHeadersWithUA(headers, s.codexIdentityOverrideUA(account))
+		identityOverride := s.codexIdentityOverrideUA(account)
+		if identityOverride == "" && ids.userAgent != "" {
+			identityOverride = ids.userAgent
+		}
+		enforceCodexIdentityHeadersWithUA(headers, identityOverride)
 		userAgent = headers.Get("user-agent")
 	}
-	ids.sandbox = codexSandboxForUserAgent(userAgent)
-	return ids
+	if ids.sandbox == "" {
+		ids.sandbox = codexSandboxForUserAgent(userAgent)
+	}
+	return ids, nil
 }
 
 // OpenAI allowed headers whitelist (for non-passthrough).
@@ -434,6 +716,7 @@ func (t *accountWriteThrottle) Allow(id int64, now time.Time) bool {
 }
 
 var defaultOpenAICodexSnapshotPersistThrottle = newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval)
+var defaultCodexDevicePoolMalformedLogRate = newAccountWriteThrottle(codexDevicePoolMalformedLogInterval)
 
 // ErrNoAvailableCompactAccounts indicates a legacy /responses/compact request
 // needs compact support but no compatible account is available.
@@ -499,6 +782,8 @@ type OpenAIGatewayService struct {
 	openaiWSRetryMetrics                openAIWSRetryMetrics
 	responseHeaderFilter                *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle               *accountWriteThrottle
+	codexDevicePoolMalformedLogRate     *accountWriteThrottle
+	codexDevicePoolMetrics              codexDevicePoolMetrics
 	codexModelsManifestCache            codexModelsManifestCache
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
