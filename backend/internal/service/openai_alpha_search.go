@@ -263,16 +263,8 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 	} else {
 		req.Header.Set("Originator", canonical.originator)
 	}
-	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
-		req.Header.Set("User-Agent", customUA)
-	} else if userAgent := openAIAlphaSearchInboundHeader(c, "User-Agent"); userAgent != "" {
-		req.Header.Set("User-Agent", userAgent)
-	} else {
-		req.Header.Set("User-Agent", canonical.userAgent)
-	}
-	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		req.Header.Set("User-Agent", canonical.userAgent)
-	}
+	uaDecision := s.resolveOpenAIAlphaSearchUserAgentDecision(c, account)
+	req.Header.Set("User-Agent", uaDecision.userAgent)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
 		isolated := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionID)
@@ -280,7 +272,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 		req.Header.Set("Conversation_ID", isolated)
 	}
 	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), apiKeyID)
-	enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+	enforceCodexIdentityHeadersWithUA(req.Header, uaDecision.identityOverride)
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
@@ -409,17 +401,9 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 		} else {
 			req.Header.Set("Originator", canonical.originator)
 		}
-		if customUA := account.GetOpenAIUserAgent(); customUA != "" {
-			req.Header.Set("User-Agent", customUA)
-		} else if userAgent := openAIAlphaSearchInboundHeader(c, "User-Agent"); userAgent != "" {
-			req.Header.Set("User-Agent", userAgent)
-		} else {
-			req.Header.Set("User-Agent", canonical.userAgent)
-		}
-		if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-			req.Header.Set("User-Agent", canonical.userAgent)
-		}
-		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+		uaDecision := s.resolveOpenAIAlphaSearchUserAgentDecision(c, account)
+		req.Header.Set("User-Agent", uaDecision.userAgent)
+		enforceCodexIdentityHeadersWithUA(req.Header, uaDecision.identityOverride)
 	}
 
 	account.ApplyHeaderOverrides(req.Header)
@@ -457,6 +441,18 @@ func openAIAlphaSearchInboundHeader(c *gin.Context, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(c.GetHeader(key))
+}
+
+// resolveOpenAIAlphaSearchUserAgentDecision reuses the gateway-wide UA priority
+// chain without importing staged inference personas into SearchClient. The
+// standalone search client keeps its inbound UA as the endpoint-specific
+// fallback; only a missing inbound identity falls back to the canonical UA.
+func (s *OpenAIGatewayService) resolveOpenAIAlphaSearchUserAgentDecision(c *gin.Context, account *Account) codexOutboundUserAgentDecision {
+	decision := s.resolveCodexOutboundUserAgentDecision(account, openAIAlphaSearchInboundHeader(c, "User-Agent"), "")
+	if decision.userAgent == "" {
+		decision.userAgent = CodexCanonicalUserAgent()
+	}
+	return decision
 }
 
 var openAIAlphaSearchUnsupportedBodyFields = [...]string{

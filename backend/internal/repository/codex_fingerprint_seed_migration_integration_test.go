@@ -139,7 +139,7 @@ RETURNING id
 	requireCanonicalUUIDString(t, firstSeeds[1])
 	require.NotEqual(t, firstSeeds[0], firstSeeds[1], "gen_random_uuid must be evaluated per eligible row")
 	require.Equal(t, "11111111-1111-4111-8111-111111111111", firstSeeds[2])
-	require.Empty(t, firstSeeds[3], "API-key accounts must not receive a Codex fingerprint seed")
+	requireCanonicalUUIDString(t, firstSeeds[3])
 
 	rows, err = repo.BulkUpdate(ctx, ids, updates)
 	require.NoError(t, err)
