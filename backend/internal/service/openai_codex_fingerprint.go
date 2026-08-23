@@ -33,7 +33,7 @@ func stageCodexFingerprintIDs(c *gin.Context, ids *codexFingerprintIDs) {
 }
 
 func stagedCodexFingerprintIDs(c *gin.Context, account *Account) *codexFingerprintIDs {
-	if c == nil || account == nil || !account.UsesOpenAICodexProtocol() {
+	if c == nil || account == nil || (!account.UsesOpenAICodexProtocol() && !isOpenAICodexFingerprintAccount(account)) {
 		return nil
 	}
 	value, ok := c.Get(codexFingerprintIDsContextKey)
@@ -68,7 +68,8 @@ func stagedCodexFingerprintUserAgent(c *gin.Context, account *Account) string {
 
 // applyStagedCodexFingerprintHeaders 读取 context 暂存的收敛 ID 并改写出站头。
 // 非透传与透传两个请求构造器共用本函数，防止应用语义漂移。仅解析该
-// snapshot 的 OAuth 账号可读取，避免 stale context 跨账号 failover 泄漏。
+// snapshot 的 OpenAI OAuth/API Key 账号可读取，避免 stale context 跨账号
+// failover 泄漏。
 func applyStagedCodexFingerprintHeaders(c *gin.Context, account *Account, h http.Header) {
 	applyCodexFingerprintHeaders(h, stagedCodexFingerprintIDs(c, account))
 }
@@ -77,10 +78,74 @@ func applyStagedCodexFingerprintClientMetadata(c *gin.Context, account *Account,
 	return applyCodexFingerprintClientMetadata(reqBody, stagedCodexFingerprintIDs(c, account))
 }
 
-// codexFingerprintMode 控制 OAuth 账号出站请求的设备指纹收敛强度。
-// 多人共享同一 OAuth 账号时，每个用户的 Codex 客户端会携带各自不同的
+// stageCodexFingerprintForMap resolves one account-scoped identity snapshot and
+// applies it to a decoded request body. All map-based forwarding paths use this
+// seam so API-key eligibility and off semantics cannot drift by endpoint.
+func (s *OpenAIGatewayService) stageCodexFingerprintForMap(c *gin.Context, account *Account, reqBody map[string]any, promptCacheFallback any, enforceIdentity bool) (bool, error) {
+	stageCodexFingerprintIDs(c, nil)
+	if !isOpenAICodexFingerprintAccount(account) {
+		return false, nil
+	}
+	var clientHeaders http.Header
+	if c != nil && c.Request != nil {
+		clientHeaders = c.Request.Header
+	}
+	headerSessionID := extractClientSessionID(clientHeaders)
+	bodySessionID := codexFingerprintSessionHint(reqBody["client_metadata"], nil)
+	bodyPromptCacheKey := codexFingerprintSessionHint(nil, reqBody["prompt_cache_key"])
+	promptCacheKey := reqBody["prompt_cache_key"]
+	if promptCacheKey == nil {
+		promptCacheKey = promptCacheFallback
+	}
+	clientHeaders = withCodexFingerprintSessionHint(clientHeaders, codexFingerprintSessionHint(reqBody["client_metadata"], promptCacheKey))
+	ids, err := s.resolveCodexFingerprintIDsForOutbound(c, account, clientHeaders, enforceIdentity)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	if ids != nil {
+		captureCodexFingerprintPromptCacheSessionHint(ids, headerSessionID, bodySessionID, bodyPromptCacheKey)
+		captureCodexFingerprintPromptCacheKeyFallback(ids, promptCacheFallback)
+		changed = applyCodexFingerprintClientMetadata(reqBody, ids)
+	}
+	stageCodexFingerprintIDs(c, ids)
+	return changed, nil
+}
+
+// stageCodexFingerprintForRaw is the raw-JSON counterpart used by passthrough
+// and native WebSocket ingress. It preserves the hot path's surgical JSON
+// rewrite while sharing the same account gate and staged header snapshot.
+func (s *OpenAIGatewayService) stageCodexFingerprintForRaw(c *gin.Context, account *Account, body []byte, enforceIdentity bool) ([]byte, bool, error) {
+	stageCodexFingerprintIDs(c, nil)
+	if !isOpenAICodexFingerprintAccount(account) {
+		return body, false, nil
+	}
+	var clientHeaders http.Header
+	if c != nil && c.Request != nil {
+		clientHeaders = c.Request.Header
+	}
+	headerSessionID := extractClientSessionID(clientHeaders)
+	bodySessionID := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.session_id").String())
+	bodyPromptCacheKey := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+	clientHeaders = withCodexFingerprintSessionHint(clientHeaders, codexFingerprintSessionHintRaw(body))
+	ids, err := s.resolveCodexFingerprintIDsForOutbound(c, account, clientHeaders, enforceIdentity)
+	if err != nil {
+		return body, false, err
+	}
+	captureCodexFingerprintPromptCacheSessionHint(ids, headerSessionID, bodySessionID, bodyPromptCacheKey)
+	rewritten, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
+	if err != nil {
+		return body, false, err
+	}
+	stageCodexFingerprintIDs(c, ids)
+	return rewritten, changed, nil
+}
+
+// codexFingerprintMode 控制 OpenAI OAuth/API Key 账号出站请求的设备指纹
+// 收敛强度。多人共享同一账号时，每个用户的 Codex 客户端会携带各自不同的
 // installation_id / session_id / thread_id，上游据此判定设备数和会话数。
-// off 只做账号 session 命名空间；device/session/full 则在平台池 slot 内逐级收敛。
+// OAuth off 保留既有账号 session 命名空间；API Key off 不启用新增的指纹
+// 收敛，并保留各入口原有的 session 兼容行为。其余模式在平台池 slot 内逐级收敛。
 type codexFingerprintMode string
 
 const (
@@ -154,6 +219,16 @@ func codexFingerprintModeRequiresSeed(mode codexFingerprintMode) bool {
 	}
 }
 
+func isOpenAICodexFingerprintAccount(account *Account) bool {
+	return account != nil && (account.IsOpenAIOAuthLike() || account.IsOpenAIApiKey())
+}
+
+func shouldResolveCodexFingerprint(account *Account) bool {
+	// SetupToken 账号不进入收敛：seed 兜底需要写库，写库不可用时不能让请求硬失败；
+	// 其会话级隔离由 isolateOpenAISessionID / upstream 侧保留路径承担。
+	return account != nil && (account.IsOpenAIOAuth() || (account.IsOpenAIApiKey() && account.GetCodexFingerprintMode() != codexFingerprintOff))
+}
+
 // codexFingerprintDerivedSeedNamespace is the fixed UUIDv5 (SHA-1) namespace for
 // deterministic seed derivation. It must never change after release: every derived
 // seed is anchored to its value.
@@ -223,7 +298,7 @@ func codexFingerprintSeed(extra map[string]any) (string, bool) {
 
 func prepareCodexFingerprintExtraForCreate(platform, accountType string, credentials, extra map[string]any) map[string]any {
 	prepared := stripCodexFingerprintSeed(extra)
-	if platform != PlatformOpenAI || (accountType != AccountTypeOAuth && accountType != AccountTypeSetupToken) || !codexFingerprintModeRequiresSeed(codexFingerprintModeFromExtra(prepared)) {
+	if platform != PlatformOpenAI || (accountType != AccountTypeOAuth && accountType != AccountTypeSetupToken && accountType != AccountTypeAPIKey) || !codexFingerprintModeRequiresSeed(codexFingerprintModeFromExtra(prepared)) {
 		return prepared
 	}
 	if prepared == nil {
@@ -239,7 +314,7 @@ func prepareCodexFingerprintExtraForCreate(platform, accountType string, credent
 
 func prepareCodexFingerprintExtraForUpdate(account *Account, extra map[string]any) map[string]any {
 	prepared := stripCodexFingerprintSeed(extra)
-	if account == nil || !account.IsOpenAIOAuthLike() {
+	if !isOpenAICodexFingerprintAccount(account) {
 		return prepared
 	}
 	if prepared != nil {
@@ -312,7 +387,7 @@ func ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates map[string]any) boo
 // 的 A/B 实测。上游的配额判定策略不可观测，因此这里取兼容安全的一侧：
 // 不显式 opt-in 就保持 v0.1.175 之前的客户端身份（#5610）。
 func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
-	if a == nil || !a.IsOpenAIOAuthLike() {
+	if !isOpenAICodexFingerprintAccount(a) {
 		return codexFingerprintOff
 	}
 	return codexFingerprintModeFromExtra(a.Extra)
@@ -797,6 +872,21 @@ func captureCodexFingerprintPromptCacheKeyFallback(ids *codexFingerprintIDs, val
 	}
 	ids.originalBodySessionID = promptCacheKey
 	ensureCodexFingerprintSessionID(ids, promptCacheKey)
+}
+
+// captureCodexFingerprintPromptCacheSessionHint records that prompt_cache_key
+// was the request's only client-owned session source before stage synthesized a
+// temporary session header for pool selection. Without this provenance, the
+// body pass mistakes that same key for an explicit cache override and leaves it
+// outside session/full convergence.
+func captureCodexFingerprintPromptCacheSessionHint(ids *codexFingerprintIDs, headerSessionID, bodySessionID, promptCacheKey string) {
+	if ids == nil || strings.TrimSpace(headerSessionID) != "" || strings.TrimSpace(bodySessionID) != "" {
+		return
+	}
+	promptCacheKey = strings.TrimSpace(promptCacheKey)
+	if promptCacheKey != "" {
+		ids.originalBodySessionID = promptCacheKey
+	}
 }
 
 func shouldRewriteCodexFingerprintPromptCacheKey(ids *codexFingerprintIDs, promptCacheKey string) bool {
