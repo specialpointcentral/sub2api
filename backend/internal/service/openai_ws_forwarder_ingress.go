@@ -766,10 +766,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		return fmt.Errorf("build ws headers: %w", buildHdrErr)
 	}
 	baseAcquireReq := openAIWSAcquireRequest{
-		Account:    account,
-		WSURL:      wsURL,
-		Headers:    wsHeaders,
-		TLSProfile: s.resolveHTTPUpstreamTLSProfile(account),
+		Account:                 account,
+		AccountConcurrencyLimit: s.openAIWSAccountConcurrencyLimit(ctx, account),
+		WSURL:                   wsURL,
+		Headers:                 wsHeaders,
+		TLSProfile:              s.resolveHTTPUpstreamTLSProfile(account),
 		HeadersFactory: func(factoryCtx context.Context, headers http.Header) (http.Header, error) {
 			return s.refreshOpenAIAgentIdentityHeaders(factoryCtx, account, headers)
 		},
@@ -937,6 +938,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		turnStart := time.Now()
 		wroteDownstream := false
+		if paceErr := s.waitForOpenAIAccountStart(ctx, account); paceErr != nil {
+			return nil, NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "OpenAI account request pacing queue is full, please retry later", paceErr)
+		}
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
 				"write_upstream",

@@ -245,6 +245,12 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAICodexDevicePoolPlatformRatio:                 defaultOpenAICodexDevicePoolPlatformRatio,
 		SettingKeyOpenAICodexUAPersonaEnabled:                        "false",
 		SettingKeyOpenAICodexVersionStaggerMaxHours:                  "0",
+		SettingKeyOpenAIRequestPacingEnabled:                         "false",
+		SettingKeyOpenAIRequestPacingMinIntervalMS:                   "250",
+		SettingKeyOpenAIRequestPacingMaxIntervalMS:                   "750",
+		SettingKeyOpenAIAccountThreadConcurrencyLimit:                "0",
+		SettingKeyOpenAIQuotaProbeIntervalMinutes:                    "10",
+		SettingKeyOpenAIQuotaProbeJitterRatio:                        "0.25",
 		SettingPaymentVisibleMethodAlipaySource:                      "",
 		SettingPaymentVisibleMethodWxpaySource:                       "",
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
@@ -900,6 +906,13 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		}
 		result.OpenAICodexVersionStaggerMaxHours = value
 	}
+	trafficShaping := normalizeOpenAITrafficShapingSettings(settings)
+	result.OpenAIRequestPacingEnabled = trafficShaping.RequestPacingEnabled
+	result.OpenAIRequestPacingMinIntervalMS = trafficShaping.RequestPacingMinIntervalMS
+	result.OpenAIRequestPacingMaxIntervalMS = trafficShaping.RequestPacingMaxIntervalMS
+	result.OpenAIAccountThreadConcurrencyLimit = trafficShaping.AccountThreadConcurrencyLimit
+	result.OpenAIQuotaProbeIntervalMinutes = trafficShaping.QuotaProbeIntervalMinutes
+	result.OpenAIQuotaProbeJitterRatio = trafficShaping.QuotaProbeJitterRatio
 	// codex_cli_only 加固
 	result.MinCodexVersion = settings[SettingKeyMinCodexVersion]
 	result.MaxCodexVersion = settings[SettingKeyMaxCodexVersion]
