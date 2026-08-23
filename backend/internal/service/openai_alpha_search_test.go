@@ -41,6 +41,52 @@ func alphaSearchResponsesSSE(output string) string {
 		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":` + strconv.Quote(output) + `}]}]}}` + "\n\n"
 }
 
+func TestResolveOpenAIAlphaSearchUserAgentDecisionPreservesSearchClientPriority(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+	c.Request.Header.Set("User-Agent", " search-client/1.0 ")
+
+	t.Run("account override wins over SearchClient inbound identity", func(t *testing.T) {
+		svc := &OpenAIGatewayService{cfg: &config.Config{}}
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Credentials: map[string]any{
+				"user_agent": " codex_cli_rs/0.144.1 (custom; x86_64) ",
+			},
+		}
+
+		decision := svc.resolveOpenAIAlphaSearchUserAgentDecision(c, account)
+
+		require.Equal(t, "codex_cli_rs/0.144.1 (custom; x86_64)", decision.userAgent)
+		require.Equal(t, decision.userAgent, decision.identityOverride)
+	})
+
+	t.Run("SearchClient inbound identity remains the endpoint-specific fallback", func(t *testing.T) {
+		decision := (&OpenAIGatewayService{cfg: &config.Config{}}).resolveOpenAIAlphaSearchUserAgentDecision(c, &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+		})
+
+		require.Equal(t, "search-client/1.0", decision.userAgent)
+		require.Empty(t, decision.identityOverride)
+	})
+
+	t.Run("missing SearchClient identity falls back to the canonical gateway identity", func(t *testing.T) {
+		emptyContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+		emptyContext.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+
+		decision := (&OpenAIGatewayService{cfg: &config.Config{}}).resolveOpenAIAlphaSearchUserAgentDecision(emptyContext, &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+		})
+
+		require.Equal(t, codexCLIUserAgent, decision.userAgent)
+		require.Empty(t, decision.identityOverride)
+	})
+}
+
 func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{

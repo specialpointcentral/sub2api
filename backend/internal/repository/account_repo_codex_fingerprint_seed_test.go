@@ -32,7 +32,7 @@ func TestBulkUpdateEnsuresCodexFingerprintSeedWithPerRowSQL(t *testing.T) {
 	query := normalizeSQLWhitespace(exec.execQueries[0])
 	require.Contains(t, query, "jsonb_set")
 	require.Contains(t, query, "gen_random_uuid()::text")
-	require.Contains(t, query, "platform = 'openai' AND type = 'oauth'")
+	require.Contains(t, query, "platform = 'openai' AND type IN ('oauth', 'apikey')")
 	require.Contains(t, query, "to_jsonb(extra ->> 'codex_fingerprint_seed')")
 	require.Contains(t, query, codexFingerprintSeedCanonicalPattern)
 	require.NotContains(t, query, "22222222-2222-4222-8222-222222222222")
@@ -88,7 +88,7 @@ func TestEnsureCodexFingerprintSeedReturnsAtomicallyCreatedSeed(t *testing.T) {
 	mock.ExpectQuery(`SELECT platform, type, COALESCE\(credentials::text, '\{\}'\) FROM accounts WHERE id = \$1 AND deleted_at IS NULL FOR UPDATE`).
 		WithArgs(int64(27)).
 		WillReturnRows(sqlmock.NewRows([]string{"platform", "type", "credentials"}).AddRow("openai", "oauth", "{}"))
-	mock.ExpectQuery(`(?s)UPDATE accounts SET extra = .*gen_random_uuid\(\)::text.*WHERE id = \$1.*platform = 'openai'.*type = 'oauth'.*NOT COALESCE\(.*false\).*RETURNING extra ->> 'codex_fingerprint_seed'`).
+	mock.ExpectQuery(`(?s)UPDATE accounts SET extra = .*gen_random_uuid\(\)::text.*WHERE id = \$1.*platform = 'openai'.*type IN \('oauth', 'apikey'\).*NOT COALESCE\(.*false\).*RETURNING extra ->> 'codex_fingerprint_seed'`).
 		WithArgs(int64(27)).
 		WillReturnRows(sqlmock.NewRows([]string{"seed"}).AddRow("33333333-3333-4333-8333-333333333333"))
 	mock.ExpectCommit()

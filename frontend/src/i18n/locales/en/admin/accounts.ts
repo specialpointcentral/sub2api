@@ -642,11 +642,16 @@ export default {
         codexCLIOnlyAppServerDesc:
           "Effective only when the switch above is on. When enabled, this account also allows third-party clients that embed the Codex engine over the app-server protocol (e.g. Claude Code's codex plugin); they still pass the global engine-fingerprint gate. OR-combined with the global app-server toggle.",
         codexFingerprintMode: 'Codex fingerprint convergence',
-        codexFingerprintModeDesc: 'When multiple users share the same OAuth account, converge device/session identifiers to account-level stable values to reduce upstream-visible device and session count. Off by default (client identifiers pass through as-is); opt in explicitly when needed. Some accounts reported quota shrinkage after enabling convergence, so choose based on your own measurements.',
-        codexFingerprintOff: 'Off (passthrough, default)',
+        codexFingerprintModeDesc: 'Applies to OpenAI OAuth and API Key accounts. OAuth Off keeps account-scoped session namespacing; API Key Off does not enable fingerprint convergence and preserves existing endpoint-specific session handling, even if a historical seed remains. Device / Session / Full explicitly opt in to stable identity convergence. Enable only when the upstream is a third-party relay. Some accounts reported quota shrinkage after enabling convergence, so choose based on your own measurements.',
+        codexFingerprintOff: 'Off (no new API Key fingerprint convergence)',
         codexFingerprintDevice: 'Device only',
         codexFingerprintSession: 'Device + Session',
         codexFingerprintFull: 'Full convergence',
+        nonCodexTrafficPolicy: 'Non-Codex traffic',
+        nonCodexTrafficPolicyDesc:
+          'Controls non-official Codex client traffic for this OpenAI account. Keep it off for direct OpenAI upstreams. API Key accounts whose upstream is a third-party relay can also enable pi normalization. WebSocket traffic remains passthrough.',
+        nonCodexTrafficOff: 'Off (passthrough)',
+        nonCodexTrafficPi: 'Use pi normalization',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',
