@@ -34,14 +34,15 @@ const (
 	openaiPlatformAPIInputTokensURL = "https://api.openai.com/v1/responses/input_tokens"
 	openaiStickySessionTTL          = time.Hour // 粘性会话TTL
 	// 与真实 Codex TUI 的 User-Agent 结构对齐：
-	// {originator}/{version} ({OS} {OS_version}; {arch}) {terminal}
+	// {originator}/{version} ({OS} {OS_version}; {arch}) {terminal} (codex-tui; {version})
 	// 缺少 OS/架构/终端后缀的形态易被上游指纹识别为非官方客户端。
-	// 该后缀是 UA 形态的唯一定义处，buildCodexCLIUserAgent 按运行时版本号复用它。
+	// app-server initialize 将 TUI 的 clientInfo.name/version 写入尾部组件；这里的
+	// 静态后缀只定义 OS/架构/终端段，版本感知构造器负责追加 clientInfo 组件。
 	codexCLIUserAgentSuffix = " (Ubuntu 22.4.0; x86_64) xterm-256color"
 	// codexCLIUserAgent 是编译期兜底 UA；运行时优先使用由后台版本号拼出的规范 UA。
 	// 版本段必须来自 codexCLIVersion：UA 与 version 头是同一个版本声明的两个出口，
 	// 各自硬编码会漂移成互相矛盾的身份。
-	codexCLIUserAgent = openai.CodexDefaultOriginator + "/" + codexCLIVersion + codexCLIUserAgentSuffix
+	codexCLIUserAgent = openai.CodexDefaultOriginator + "/" + codexCLIVersion + codexCLIUserAgentSuffix + " (" + openai.CodexDefaultOriginator + "; " + codexCLIVersion + ")"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -69,6 +70,38 @@ const (
 	// 陈旧时放行一次请求，从而通过正常响应头自愈，而无需等待整个窗口（5h/7d）重置。
 	openAICodexAutoPauseStaleAfter = 2 * time.Hour
 )
+
+// resolveCodexFingerprintIDsForOutbound 为本 attempt 解析收敛 ID，并按最终出站
+// User-Agent 固化 sandbox。body 与 header 随后共享同一份 IDs，避免两条载体
+// 分别猜测 OS 后产生 metadata 漂移。
+func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(account *Account, clientHeaders http.Header, enforceIdentity bool) *codexFingerprintIDs {
+	ids := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+	if ids == nil {
+		return nil
+	}
+
+	userAgent := ""
+	if clientHeaders != nil {
+		userAgent = strings.TrimSpace(clientHeaders.Get("user-agent"))
+	}
+	if customUA := strings.TrimSpace(account.GetOpenAIUserAgent()); customUA != "" {
+		userAgent = customUA
+	}
+	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+		userAgent = CodexCanonicalUserAgent()
+	}
+	if enforceIdentity {
+		headers := make(http.Header)
+		headers.Set("originator", openai.CodexDefaultOriginator)
+		if userAgent != "" {
+			headers.Set("user-agent", userAgent)
+		}
+		enforceCodexIdentityHeadersWithUA(headers, s.codexIdentityOverrideUA(account))
+		userAgent = headers.Get("user-agent")
+	}
+	ids.sandbox = codexSandboxForUserAgent(userAgent)
+	return ids
+}
 
 // OpenAI allowed headers whitelist (for non-passthrough).
 var openaiAllowedHeaders = map[string]bool{
