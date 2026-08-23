@@ -140,6 +140,10 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	if metadata := strings.TrimSpace(turnMetadata); metadata != "" {
 		headers.Set(openAIWSTurnMetadataHeader, metadata)
 	}
+	inboundUserAgent := ""
+	if c != nil {
+		inboundUserAgent = c.GetHeader("User-Agent")
+	}
 	applyStagedCodexFingerprintHeaders(c, account, headers)
 
 	if account != nil && account.UsesOpenAICodexProtocol() {
@@ -155,24 +159,16 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	}
 	headers.Set("OpenAI-Beta", betaValue)
 
-	customUA := ""
-	if account != nil {
-		customUA = account.GetOpenAIUserAgent()
-	}
-	if strings.TrimSpace(customUA) != "" {
-		headers.Set("user-agent", customUA)
-	} else if c != nil {
-		if ua := strings.TrimSpace(c.GetHeader("User-Agent")); ua != "" {
-			headers.Set("user-agent", ua)
-		}
-	}
-	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		headers.Set("user-agent", CodexCanonicalUserAgent())
+	uaDecision := s.resolveCodexOutboundUserAgentDecision(account, inboundUserAgent, stagedCodexFingerprintUserAgent(c, account))
+	if uaDecision.userAgent != "" {
+		headers.Set("user-agent", uaDecision.userAgent)
+	} else {
+		headers.Del("user-agent")
 	}
 	// 终态收口：WS 握手与 HTTP 出站共用同一套身份语义，账号级自定义 UA 同样作为
 	// 管理员显式配置传入（上面写进 headers 的值只在强制统一被关闭时才参与配对）。
 	if account != nil && account.UsesOpenAICodexProtocol() {
-		enforceCodexIdentityHeadersWithUA(headers, s.codexIdentityOverrideUAForRequest(c, account))
+		enforceCodexIdentityHeadersWithUA(headers, uaDecision.identityOverride)
 	}
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）。
