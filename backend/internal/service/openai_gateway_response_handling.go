@@ -1761,6 +1761,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	}
 	responseID := extractOpenAIResponseIDFromJSONBytes(body)
 	ObserveCyberSessionResponseID(c, responseID)
+	c.Header("Content-Type", contentType)
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
