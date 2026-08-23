@@ -6,17 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTLSFingerprintProfileValidateRejectsHTTP2ALPN(t *testing.T) {
-	// The custom-profile upstream transport is HTTP/1.1-only: a uTLS connection
-	// that negotiates "h2" cannot be used by net/http's HTTP/2 stack, so h2/h2c
-	// ALPN must fail closed at validation time instead of breaking at runtime.
-	// Built-in presets (e.g. PresetChrome120HTTP1) are constructed in code and
-	// never pass through this validation, so they are unaffected.
+func TestTLSFingerprintProfileValidateRejectsH2CALPN(t *testing.T) {
+	// Cleartext HTTP/2 can never be negotiated by the TLS-only upstream
+	// transport, so h2c must fail closed at validation time instead of breaking
+	// at runtime. Built-in presets (e.g. PresetChrome120HTTP1) are constructed
+	// in code and never pass through this validation, so they are unaffected.
 	for _, alpn := range [][]string{
-		{"h2"},
 		{"h2c"},
-		{"H2"},
-		{"h2", "http/1.1"},
+		{"H2C"},
 		{"http/1.1", "h2c"},
 	} {
 		profile := &TLSFingerprintProfile{Name: "test", ALPNProtocols: alpn}
@@ -28,11 +25,16 @@ func TestTLSFingerprintProfileValidateRejectsHTTP2ALPN(t *testing.T) {
 	}
 }
 
-func TestTLSFingerprintProfileValidateAllowsHTTP1ALPN(t *testing.T) {
+func TestTLSFingerprintProfileValidateAllowsSupportedALPN(t *testing.T) {
+	// "h2" is supported via TLSRoundTripper's ALPN sniffing: the uTLS handshake
+	// negotiates the protocol and the request is dispatched to http2.Transport
+	// or http.Transport accordingly.
 	for _, alpn := range [][]string{
 		nil,
 		{},
 		{"http/1.1"},
+		{"h2"},
+		{"h2", "http/1.1"},
 		{"http/1.1", "http/1.0"},
 	} {
 		profile := &TLSFingerprintProfile{Name: "test", ALPNProtocols: alpn}
