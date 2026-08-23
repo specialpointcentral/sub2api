@@ -1103,8 +1103,8 @@ func TestOpenAIGatewayService_Forward_WSv2_CodexFingerprintHandshakeBodyParityAn
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.144.1")
-	c.Request.Header.Set("originator", "codex_cli_rs")
+	c.Request.Header.Set("User-Agent", "codex-tui/0.149.0 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.149.0)")
+	c.Request.Header.Set("originator", "codex-tui")
 	c.Request.Header.Set("session-id", "header-session")
 	c.Request.Header.Set("x-codex-turn-metadata", `{"installation_id":"header-install","session_id":"header-session","thread_id":"header-thread","turn_id":"header-turn","window_id":"header-window","sandbox":"seatbelt"}`)
 
@@ -1160,6 +1160,7 @@ func TestOpenAIGatewayService_Forward_WSv2_CodexFingerprintHandshakeBodyParityAn
 	wantThread := resolveConvergedThreadID(seed, "header-session")
 	payloadJSON := requestToJSONString(captureConn.lastWrite)
 
+	require.Equal(t, codexCLIUserAgent, captureDialer.lastHeaders.Get("user-agent"))
 	require.Equal(t, wantInstall, captureDialer.lastHeaders.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session-id"))
 	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session_id"))
@@ -1180,6 +1181,8 @@ func TestOpenAIGatewayService_Forward_WSv2_CodexFingerprintHandshakeBodyParityAn
 	require.Equal(t, wantThread, gjson.Get(bodyTurnMetadata, "thread_id").String())
 	require.Equal(t, wantSession, gjson.Get(headerTurnMetadata, "session_id").String())
 	require.Equal(t, gjson.Get(bodyTurnMetadata, "turn_id").String(), gjson.Get(headerTurnMetadata, "turn_id").String())
+	require.Equal(t, "seccomp", gjson.Get(bodyTurnMetadata, "sandbox").String())
+	require.Equal(t, gjson.Get(bodyTurnMetadata, "sandbox").String(), gjson.Get(headerTurnMetadata, "sandbox").String())
 	require.NotZero(t, gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Int())
 	require.Equal(t,
 		gjson.Get(bodyTurnMetadata, "turn_started_at_unix_ms").Int(),
