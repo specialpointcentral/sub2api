@@ -480,6 +480,12 @@ const baseSettingsResponse = {
   openai_codex_device_pool_platform_ratio: "1:1:2",
   openai_codex_ua_persona_enabled: false,
   openai_codex_version_stagger_max_hours: 0,
+  openai_request_pacing_enabled: false,
+  openai_request_pacing_min_interval_ms: 250,
+  openai_request_pacing_max_interval_ms: 750,
+  openai_account_thread_concurrency_limit: 0,
+  openai_quota_probe_interval_minutes: 10,
+  openai_quota_probe_jitter_ratio: 0.25,
   payment_enabled: true,
   payment_min_amount: 1,
   payment_max_amount: 10000,
@@ -1203,6 +1209,12 @@ describe("admin SettingsView payment visible method controls", () => {
       openai_codex_device_pool_platform_ratio: "2:3:5",
       openai_codex_ua_persona_enabled: true,
       openai_codex_version_stagger_max_hours: 36,
+      openai_request_pacing_enabled: true,
+      openai_request_pacing_min_interval_ms: 300,
+      openai_request_pacing_max_interval_ms: 900,
+      openai_account_thread_concurrency_limit: 4,
+      openai_quota_probe_interval_minutes: 15,
+      openai_quota_probe_jitter_ratio: 0.2,
     });
 
     const wrapper = mountView();
@@ -1223,6 +1235,12 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(wrapper.find('[data-testid="codex-device-pool-platform-ratio"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="codex-ua-persona-enabled"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="codex-version-stagger-max-hours"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="openai-request-pacing-enabled"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="openai-request-pacing-min-interval-ms"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="openai-request-pacing-max-interval-ms"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="openai-account-thread-concurrency-limit"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="openai-quota-probe-interval-minutes"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="openai-quota-probe-jitter-ratio"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="codex-device-pool-migration-warning"]').exists()).toBe(true);
 
     await wrapper.find("form").trigger("submit.prevent");
@@ -1234,6 +1252,12 @@ describe("admin SettingsView payment visible method controls", () => {
         openai_codex_device_pool_platform_ratio: "2:3:5",
         openai_codex_ua_persona_enabled: true,
         openai_codex_version_stagger_max_hours: 36,
+        openai_request_pacing_enabled: true,
+        openai_request_pacing_min_interval_ms: 300,
+        openai_request_pacing_max_interval_ms: 900,
+        openai_account_thread_concurrency_limit: 4,
+        openai_quota_probe_interval_minutes: 15,
+        openai_quota_probe_jitter_ratio: 0.2,
       }),
     );
   });
@@ -1248,6 +1272,18 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(zhWarning).toContain("全部用户身份");
     expect(zhWarning).toContain("slot 0");
     expect(zhWarning).toContain("RootSession");
+  });
+
+  it("documents OpenAI OAuth and API key request pacing in both locales", () => {
+    const enLabel = enSettings.settings.gatewayForwarding.openAIRequestPacing;
+    const enHint = enSettings.settings.gatewayForwarding.openAIRequestPacingHint;
+    const zhLabel = zhSettings.settings.gatewayForwarding.openAIRequestPacing;
+    const zhHint = zhSettings.settings.gatewayForwarding.openAIRequestPacingHint;
+
+    expect(enLabel).toContain("OpenAI accounts (OAuth and API Key)");
+    expect(enHint).toContain("OpenAI accounts (OAuth and API Key)");
+    expect(zhLabel).toContain("OpenAI 账号（OAuth 与 API Key）");
+    expect(zhHint).toContain("OpenAI 账号（OAuth 与 API Key）");
   });
 
   it("rejects a Codex device pool size above eight before submitting", async () => {

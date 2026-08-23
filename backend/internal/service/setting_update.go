@@ -485,6 +485,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexDevicePoolPlatformRatio] = settings.OpenAICodexDevicePoolPlatformRatio
 	updates[SettingKeyOpenAICodexUAPersonaEnabled] = strconv.FormatBool(settings.OpenAICodexUAPersonaEnabled)
 	updates[SettingKeyOpenAICodexVersionStaggerMaxHours] = strconv.Itoa(settings.OpenAICodexVersionStaggerMaxHours)
+	updates[SettingKeyOpenAIRequestPacingEnabled] = strconv.FormatBool(settings.OpenAIRequestPacingEnabled)
+	updates[SettingKeyOpenAIRequestPacingMinIntervalMS] = strconv.Itoa(settings.OpenAIRequestPacingMinIntervalMS)
+	updates[SettingKeyOpenAIRequestPacingMaxIntervalMS] = strconv.Itoa(settings.OpenAIRequestPacingMaxIntervalMS)
+	updates[SettingKeyOpenAIAccountThreadConcurrencyLimit] = strconv.Itoa(settings.OpenAIAccountThreadConcurrencyLimit)
+	updates[SettingKeyOpenAIQuotaProbeIntervalMinutes] = strconv.Itoa(settings.OpenAIQuotaProbeIntervalMinutes)
+	updates[SettingKeyOpenAIQuotaProbeJitterRatio] = strconv.FormatFloat(settings.OpenAIQuotaProbeJitterRatio, 'f', -1, 64)
 	// SettingKeyOpenAICodexClientVersionSynced 由自动同步任务独占写入，此处不得覆盖，
 	// 否则面板保存会把同步结果清空。
 	// codex_cli_only 加固
@@ -760,6 +766,11 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	s.openAICodexUAPersonaSF.Forget(SettingKeyOpenAICodexUAPersonaEnabled)
 	s.openAICodexUAPersonaCache.Store(&cachedOpenAICodexUAPersonaEnabled{
 		value: settings.OpenAICodexUAPersonaEnabled, expiresAt: time.Now().Add(openAICodexUAPersonaCacheTTL).UnixNano(),
+	})
+	s.openAITrafficShapingSF.Forget(SettingKeyOpenAIRequestPacingEnabled)
+	s.openAITrafficShapingCache.Store(&cachedOpenAITrafficShapingSettings{
+		settings:  openAITrafficShapingSettingsFromSystem(settings),
+		expiresAt: time.Now().Add(openAITrafficShapingCacheTTL).UnixNano(),
 	})
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
