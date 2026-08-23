@@ -974,7 +974,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			responseCreateAt := time.Time{}
 			acceptedTurn := false
 			if isResponseCreate {
-				responseCreateAt = time.Now()
 				if !turnLifecycle.beginResponseCreate(clientFrameConn.markTurnStarted) {
 					err := errors.New("overlapping response.create is not supported")
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, err.Error(), err)
@@ -984,6 +983,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						turnLifecycle.cancelResponseCreate()
 					}
 				}()
+				// Freeze the ingress timestamp before BeforeRequest policy runs, but
+				// defer the pacing admission itself until every local rejection point
+				// has accepted the frame.
+				responseCreateAt = time.Now()
 			}
 			responsesLite := isResponseCreate && isOpenAIResponsesLiteWebSocketPayload(payload)
 			if isResponseCreate {
@@ -1093,6 +1096,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			//     覆盖（Store(nil)），因为 OpenAI 上游对该帧实际不传
 			//     service_tier 时按 default 处理，billing 应如实反映。
 			if policyErr == nil && blocked == nil && isResponseCreate {
+				if paceErr := s.waitForOpenAIAccountStart(ctx, account); paceErr != nil {
+					return out, nil, NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "OpenAI account request pacing queue is full, please retry later", paceErr)
+				}
 				usageMeta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 				_, actualModel := usageMeta.turnModels(requestModelForThisFrame)
 				SetOpsUpstreamModel(c, actualModel)
@@ -1118,6 +1124,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
+	if paceErr := s.waitForOpenAIAccountStart(ctx, account); paceErr != nil {
+		cancelFirstWrite()
+		return NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "OpenAI account request pacing queue is full, please retry later", paceErr)
+	}
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)
 	cancelFirstWrite()
 	if firstWriteErr != nil {

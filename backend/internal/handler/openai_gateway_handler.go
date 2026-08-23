@@ -746,6 +746,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if h.handleOpenAIRequestPacingError(c, err, streamStarted, false) {
+				return
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1313,6 +1316,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if h.handleOpenAIRequestPacingError(c, err, streamStarted, true) {
+				return
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1441,6 +1447,20 @@ func (h *OpenAIGatewayHandler) anthropicErrorResponse(c *gin.Context, status int
 			"message": message,
 		},
 	})
+}
+
+func (h *OpenAIGatewayHandler) handleOpenAIRequestPacingError(c *gin.Context, err error, streamStarted, anthropic bool) bool {
+	if !errors.Is(err, service.ErrOpenAIRequestPacingTimeout) {
+		return false
+	}
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+	const message = "OpenAI account request pacing queue is full, please retry later"
+	if anthropic {
+		h.anthropicStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", message, streamStarted)
+	} else {
+		h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", message, streamStarted)
+	}
+	return true
 }
 
 // anthropicStreamingAwareError handles errors that may occur during streaming,
@@ -2148,7 +2168,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 
 		account := selection.Account
-		accountMaxConcurrency := account.Concurrency
+		accountMaxConcurrency := h.gatewayService.EffectiveOpenAIAccountConcurrency(ctx, account)
 		if selection.WaitPlan != nil && selection.WaitPlan.MaxConcurrency > 0 {
 			accountMaxConcurrency = selection.WaitPlan.MaxConcurrency
 		}
@@ -2173,6 +2193,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 			account = latest
 			selection.Account = latest
+			accountMaxConcurrency = h.gatewayService.EffectiveOpenAIAccountConcurrency(admissionCtx, latest)
 		}
 		if !selection.Acquired {
 			if selection.WaitPlan == nil {
