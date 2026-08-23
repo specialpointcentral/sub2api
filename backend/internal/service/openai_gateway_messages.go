@@ -272,6 +272,19 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			}
 		}
 	}
+	if account.IsOpenAIApiKey() && shouldResolveCodexFingerprint(account) {
+		var reqBody map[string]any
+		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
+			return nil, fmt.Errorf("unmarshal for codex fingerprint: %w", err)
+		}
+		if _, fpResolveErr := s.stageCodexFingerprintForMap(c, account, reqBody, promptCacheKey, false); fpResolveErr != nil {
+			return nil, fmt.Errorf("resolve outbound codex fingerprint: %w", fpResolveErr)
+		}
+		responsesBody, err = json.Marshal(reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("remarshal after codex fingerprint: %w", err)
+		}
+	}
 	if account.Platform == PlatformOpenAI {
 		if policyBody, changed := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, responsesBody); changed {
 			responsesBody = policyBody
@@ -344,7 +357,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// Override session_id with a deterministic UUID derived from the isolated
 	// session key, ensuring different API keys produce different upstream sessions.
 	stagedIDs := stagedCodexFingerprintIDs(c, account)
-	if account.Platform != PlatformGrok && promptCacheKey != "" && (account.Type != AccountTypeOAuth || stagedIDs == nil || stagedIDs.sessionID == "") {
+	if account.Platform != PlatformGrok && promptCacheKey != "" && (stagedIDs == nil || stagedIDs.sessionID == "") {
 		isolatedSessionID := generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey))
 		upstreamReq.Header.Set("session_id", isolatedSessionID)
 		if upstreamReq.Header.Get("conversation_id") != "" {

@@ -655,27 +655,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	// first-frame parsing/session-hash routing so scheduler/sticky inputs retain
 	// their client-original shape, but before any handshake/pool acquire/dial.
 	stageCodexFingerprintIDs(c, nil)
-	if account.Type == AccountTypeOAuth && !isOpenAIResponsesCompactPath(c) {
-		var clientHeaders http.Header
-		if c != nil && c.Request != nil {
-			clientHeaders = c.Request.Header
-		}
-		clientHeaders = withCodexFingerprintSessionHint(clientHeaders, codexFingerprintSessionHintRaw(firstPayload.payloadRaw))
-		fpIDs, fpResolveErr := s.resolveCodexFingerprintIDsForOutbound(c, account, clientHeaders, true)
+	if shouldResolveCodexFingerprint(account) && !isOpenAIResponsesCompactPath(c) {
+		rewrittenPayload, changed, fpResolveErr := s.stageCodexFingerprintForRaw(c, account, firstPayload.payloadRaw, true)
 		if fpResolveErr != nil {
 			return fmt.Errorf("resolve ingress outbound codex fingerprint: %w", fpResolveErr)
 		}
-		if fpIDs != nil {
-			rewrittenPayload, changed, rewriteErr := applyCodexFingerprintClientMetadataRaw(firstPayload.payloadRaw, fpIDs)
-			if rewriteErr != nil {
-				return fmt.Errorf("rewrite ingress codex fingerprint metadata: %w", rewriteErr)
-			}
-			if changed {
-				firstPayload.payloadRaw = rewrittenPayload
-				firstPayload.payloadBytes = len(rewrittenPayload)
-			}
+		if changed {
+			firstPayload.payloadRaw = rewrittenPayload
+			firstPayload.payloadBytes = len(rewrittenPayload)
 		}
-		stageCodexFingerprintIDs(c, fpIDs)
 	}
 
 	firstRoutingFields := gjson.GetManyBytes(firstPayload.payloadRaw, "model", "service_tier")

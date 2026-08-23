@@ -194,6 +194,45 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_LeavesAPIKeySess
 	require.Empty(t, captureDialer.lastHeaders.Get("session-id"))
 }
 
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_APIKeySessionModeConvergesFirstFrame(t *testing.T) {
+	cfg := newOpenAIWSIngressFingerprintConfig()
+	captureConn := &openAIWSCaptureConn{events: [][]byte{
+		[]byte(`{"type":"response.completed","response":{"id":"resp_ingress_api_key_fingerprint","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+	}}
+	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(captureDialer)
+	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: &httpUpstreamRecorder{}, cache: &stubGatewayCache{}, openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(), openaiWSPool: pool}
+	account := &Account{
+		ID:          65,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test"},
+		Extra: map[string]any{
+			"responses_websockets_v2_enabled": true,
+			codexFingerprintModeExtraKey:      "session",
+			codexFingerprintSeedExtraKey:      testCodexFingerprintSeed,
+		},
+	}
+	requestHeaders := http.Header{
+		"User-Agent": []string{"codex_cli_rs/0.98.0"},
+		"session-id": []string{"client-session"},
+	}
+	firstPayload := `{"type":"response.create","model":"gpt-5.1","stream":false,"prompt_cache_key":"client-session","client_metadata":{"session_id":"client-session"},"input":"hello"}`
+
+	err := runOpenAIWSIngressFingerprintTest(t, svc, account, requestHeaders, firstPayload, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, captureDialer.DialCount())
+	const wantSession = "4065c8ec-c2ce-78bd-9198-53c4c5e30d6e"
+	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session-id"))
+	require.Equal(t, wantSession, captureDialer.lastHeaders.Get("session_id"))
+	require.Equal(t, wantSession, gjson.Get(requestToJSONString(captureConn.writes[0]), "prompt_cache_key").String())
+	require.Equal(t, wantSession, gjson.Get(requestToJSONString(captureConn.writes[0]), "client_metadata.session_id").String())
+}
+
 func TestOpenAIWSDownstreamWriteContext_CancellationOwnership(t *testing.T) {
 	t.Run("pre-canceled ordinary context is canceled before return", func(t *testing.T) {
 		controlCtx, cancelControl := context.WithCancelCause(context.Background())

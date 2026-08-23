@@ -508,7 +508,7 @@ export default {
         openaiCodexVersionAutoSyncHint: '每 6 小时从官方仓库获取最新稳定版客户端版本号，无需为了跟版本而升级本服务。关闭后仅使用上方手填版本或内置版本。',
         openaiCodexVersionSyncedValue: '当前同步到：{version}',
         codexRectifierTitle: 'Codex 身份整流',
-        codexRectifierDescription: '为已开启指纹收敛的 OpenAI OAuth 账号控制设备池、UA persona 与版本采用错峰。默认值保持现有出站行为。',
+        codexRectifierDescription: '为已开启指纹收敛的 OpenAI OAuth 与 API Key 账号控制设备池，并为 OAuth 控制 UA persona 与版本采用错峰。默认值保持现有出站行为。',
         codexDevicePoolSize: '设备池大小',
         codexDevicePoolSizeHint: '仅允许 1 或 3–8；1 表示关闭平台池并沿用当前单设备身份。设备按下方平台比例懒创建；后续扩容只在新用户到来时填充，可能让部分用户迁移到新设备。',
         codexDevicePoolMigrationWarning: '迁移警告：单设备与持久池身份语义不兼容。开启设备池会让全部用户身份一次性轮换；历史 slot 0 在新池中不可达。引入持久 RootSession 也可能让线程身份一次性轮换。',
