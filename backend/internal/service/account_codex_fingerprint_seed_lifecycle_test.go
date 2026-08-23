@@ -37,6 +37,40 @@ func TestAdminCreateAccountStripsUserSeedAndCreatesFreshSeedWhenEnabled(t *testi
 	require.Equal(t, "session", created.Extra[codexFingerprintModeExtraKey])
 }
 
+func TestAdminCreateAPIKeyAccountCreatesSeedOnlyWhenConvergenceEnabled(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		mode     string
+		wantSeed bool
+	}{
+		{name: "off", mode: "off", wantSeed: false},
+		{name: "session", mode: "session", wantSeed: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &upstreamBillingProbeAccountRepo{}
+			created, err := (&adminServiceImpl{accountRepo: repo}).CreateAccount(context.Background(), &CreateAccountInput{
+				Name:                 "codex-api-key-" + tt.name,
+				Platform:             PlatformOpenAI,
+				Type:                 AccountTypeAPIKey,
+				SkipDefaultGroupBind: true,
+				Extra: map[string]any{
+					codexFingerprintModeExtraKey: tt.mode,
+					codexFingerprintSeedExtraKey: userSuppliedCodexFingerprintSeed,
+				},
+			})
+
+			require.NoError(t, err)
+			seed, hasSeed := codexFingerprintSeed(created.Extra)
+			require.Equal(t, tt.wantSeed, hasSeed)
+			if tt.wantSeed {
+				require.NotEqual(t, userSuppliedCodexFingerprintSeed, seed)
+			} else {
+				require.NotContains(t, created.Extra, codexFingerprintSeedExtraKey)
+			}
+		})
+	}
+}
+
 func TestAdminUpdateAccountPreservesExistingSeedAndStripsUserSeed(t *testing.T) {
 	accountID := int64(201)
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
@@ -230,7 +264,7 @@ func TestDuplicateAccountDoesNotCopyCodexFingerprintSeed(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotEqual(t, source.ID, duplicate.ID)
-	require.NotContains(t, duplicate.Extra, codexFingerprintSeedExtraKey)
+	require.NotEqual(t, testCodexFingerprintSeed, requireValidCodexFingerprintSeed(t, duplicate.Extra))
 	require.Equal(t, "session", duplicate.Extra[codexFingerprintModeExtraKey])
 }
 
