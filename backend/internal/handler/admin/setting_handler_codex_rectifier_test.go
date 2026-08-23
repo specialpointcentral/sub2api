@@ -1,6 +1,10 @@
 package admin
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
+)
 
 func TestValidateCodexRectifierSettings(t *testing.T) {
 	tests := []struct {
@@ -38,3 +42,41 @@ func TestValidateCodexRectifierSettings(t *testing.T) {
 
 func codexIntPtr(value int) *int          { return &value }
 func codexStringPtr(value string) *string { return &value }
+
+func TestValidateOpenAITrafficShapingSettings(t *testing.T) {
+	valid := UpdateSettingsRequest{
+		OpenAIRequestPacingMinIntervalMS:    codexIntPtr(250),
+		OpenAIRequestPacingMaxIntervalMS:    codexIntPtr(750),
+		OpenAIAccountThreadConcurrencyLimit: codexIntPtr(4),
+		OpenAIQuotaProbeIntervalMinutes:     codexIntPtr(10),
+	}
+	jitter := 0.25
+	valid.OpenAIQuotaProbeJitterRatio = &jitter
+	if err := validateOpenAITrafficShapingSettings(&valid, nil); err != nil {
+		t.Fatalf("valid settings rejected: %v", err)
+	}
+
+	invalid := valid
+	invalid.OpenAIRequestPacingMinIntervalMS = codexIntPtr(751)
+	if err := validateOpenAITrafficShapingSettings(&invalid, nil); err == nil {
+		t.Fatal("expected inverted pacing interval to be rejected")
+	}
+}
+
+func TestValidateOpenAITrafficShapingSettingsRejectsPartialInvertedRange(t *testing.T) {
+	current := &service.SystemSettings{
+		OpenAIRequestPacingMinIntervalMS: 250,
+		OpenAIRequestPacingMaxIntervalMS: 750,
+	}
+
+	if err := validateOpenAITrafficShapingSettings(&UpdateSettingsRequest{
+		OpenAIRequestPacingMinIntervalMS: codexIntPtr(751),
+	}, current); err == nil {
+		t.Fatal("expected partial minimum above the stored maximum to be rejected")
+	}
+	if err := validateOpenAITrafficShapingSettings(&UpdateSettingsRequest{
+		OpenAIRequestPacingMaxIntervalMS: codexIntPtr(249),
+	}, current); err == nil {
+		t.Fatal("expected partial maximum below the stored minimum to be rejected")
+	}
+}

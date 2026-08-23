@@ -638,6 +638,12 @@ export interface SystemSettings {
   openai_codex_device_pool_platform_ratio: string;
   openai_codex_ua_persona_enabled: boolean;
   openai_codex_version_stagger_max_hours: number;
+  openai_request_pacing_enabled: boolean;
+  openai_request_pacing_min_interval_ms: number;
+  openai_request_pacing_max_interval_ms: number;
+  openai_account_thread_concurrency_limit: number;
+  openai_quota_probe_interval_minutes: number;
+  openai_quota_probe_jitter_ratio: number;
   // codex_cli_only 加固
   min_codex_version: string;
   max_codex_version: string;
@@ -959,6 +965,12 @@ export interface UpdateSettingsRequest {
   openai_codex_device_pool_platform_ratio?: string;
   openai_codex_ua_persona_enabled?: boolean;
   openai_codex_version_stagger_max_hours?: number;
+  openai_request_pacing_enabled?: boolean;
+  openai_request_pacing_min_interval_ms?: number;
+  openai_request_pacing_max_interval_ms?: number;
+  openai_account_thread_concurrency_limit?: number;
+  openai_quota_probe_interval_minutes?: number;
+  openai_quota_probe_jitter_ratio?: number;
   // codex_cli_only 加固
   min_codex_version?: string;
   max_codex_version?: string;
