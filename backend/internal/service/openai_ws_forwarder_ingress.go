@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -316,13 +317,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			normalized = next
 		}
 		accountIdentitySourceRaw := append([]byte(nil), normalized...)
-		accountScopedPayload, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(normalized, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
-		if scopeErr != nil {
-			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
-		}
-		if accountScoped {
-			normalized = accountScopedPayload
-		}
 		if responsesLite {
 			litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(normalized, account)
 			if liteErr != nil {
@@ -729,6 +723,34 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			currentBridgePayload = nextPayload
 		}
+	}
+
+	// Native ingress normally reaches buildOpenAIWSHeaders directly and therefore
+	// does not traverse Forward's OAuth fingerprint staging. Resolve only after
+	// first-frame parsing/session-hash routing so scheduler/sticky inputs retain
+	// their client-original shape, but before any handshake/pool acquire/dial.
+	stageCodexFingerprintIDs(c, nil)
+	if account.Type == AccountTypeOAuth && !isOpenAIResponsesCompactPath(c) {
+		var clientHeaders http.Header
+		if c != nil && c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		clientHeaders = withCodexFingerprintSessionHint(clientHeaders, codexFingerprintSessionHintRaw(firstPayload.payloadRaw))
+		fpIDs, fpResolveErr := s.resolveCodexFingerprintIDsForOutbound(c, account, clientHeaders, true)
+		if fpResolveErr != nil {
+			return fmt.Errorf("resolve ingress outbound codex fingerprint: %w", fpResolveErr)
+		}
+		if fpIDs != nil {
+			rewrittenPayload, changed, rewriteErr := applyCodexFingerprintClientMetadataRaw(firstPayload.payloadRaw, fpIDs)
+			if rewriteErr != nil {
+				return fmt.Errorf("rewrite ingress codex fingerprint metadata: %w", rewriteErr)
+			}
+			if changed {
+				firstPayload.payloadRaw = rewrittenPayload
+				firstPayload.payloadBytes = len(rewrittenPayload)
+			}
+		}
+		stageCodexFingerprintIDs(c, fpIDs)
 	}
 
 	firstRoutingFields := gjson.GetManyBytes(firstPayload.payloadRaw, "model", "service_tier")
@@ -1800,6 +1822,26 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		nextPayload, parseErr := parseClientPayload(turn+1, nextClientMessage)
 		if parseErr != nil {
 			return parseErr
+		}
+		// Replay the staged fingerprint rewrite on every subsequent frame, not just
+		// the first: in session/full modes a client-original client_metadata from
+		// turn 2 onwards would contradict the converged first frame and handshake
+		// headers. Each frame gets a fresh turn_id/turn_started_at, mirroring the
+		// real client's per-turn values, while session/thread stay anchored to the
+		// staged snapshot. Routing inputs were already parsed from the
+		// client-original frame above, keeping scheduler/sticky semantics.
+		if stagedIDs := stagedCodexFingerprintIDs(c, account); stagedIDs != nil {
+			frameIDs := *stagedIDs
+			frameIDs.turnID = uuid.Must(uuid.NewV7()).String()
+			frameIDs.turnStartedAtUnixMs = time.Now().UnixMilli()
+			rewrittenPayload, changed, rewriteErr := applyCodexFingerprintClientMetadataRaw(nextPayload.payloadRaw, &frameIDs)
+			if rewriteErr != nil {
+				return fmt.Errorf("rewrite ingress codex fingerprint metadata: %w", rewriteErr)
+			}
+			if changed {
+				nextPayload.payloadRaw = rewrittenPayload
+				nextPayload.payloadBytes = len(rewrittenPayload)
+			}
 		}
 		nextRoutingFields := gjson.GetManyBytes(nextPayload.payloadRaw, "model", "service_tier")
 		if nextPayload.promptCacheKey != "" {

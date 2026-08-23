@@ -184,6 +184,7 @@ func TestForwardAsChatCompletions_UnknownModelWithoutMessagesDispatchKeepsReques
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
@@ -267,6 +268,7 @@ func TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions(t *testi
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.4")
@@ -304,6 +306,7 @@ func forwardOAuthChatCompletionsForUpstreamBody(t *testing.T, body []byte) []byt
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.4")
@@ -389,6 +392,7 @@ func TestForwardAsChatCompletions_ClientDisconnectDrainsUpstreamUsage(t *testing
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
@@ -430,6 +434,7 @@ func TestForwardAsChatCompletions_BufferedContextWindowResponseFailedReturnsErro
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.5")
@@ -475,6 +480,7 @@ func TestForwardAsChatCompletions_StreamContextWindowResponseFailedReturnsErrorW
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.5")
@@ -516,6 +522,7 @@ func TestForwardAsChatCompletions_StreamBareErrorAfterOutputDoesNotFailOver(t *t
 	account := &Account{
 		ID: 1, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
 		Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+		Extra:       map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.5")
@@ -562,6 +569,7 @@ func TestForwardAsChatCompletions_StreamCyberPolicyNoFailover(t *testing.T) {
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.5")
@@ -610,6 +618,7 @@ func TestForwardAsChatCompletions_StreamsUsageWithoutClientStreamOptions(t *test
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
@@ -662,6 +671,7 @@ func TestForwardAsChatCompletions_StreamsTopLevelTerminalUsage(t *testing.T) {
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
@@ -710,6 +720,7 @@ func TestForwardAsChatCompletions_BufferedTopLevelTerminalUsage(t *testing.T) {
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
@@ -758,6 +769,7 @@ func TestForwardAsChatCompletions_TerminalUsageWithoutUpstreamCloseReturns(t *te
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	type forwardResult struct {
@@ -824,6 +836,7 @@ func TestForwardAsChatCompletions_EventNamedTerminalWithoutUpstreamCloseReturns(
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	type forwardResult struct {
@@ -887,6 +900,7 @@ func TestForwardAsChatCompletions_EventTypeDoesNotLeakAcrossFrames(t *testing.T)
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
@@ -927,6 +941,7 @@ func TestForwardAsChatCompletions_BufferedTerminalWithoutUpstreamCloseReturns(t 
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	type forwardResult struct {
@@ -979,6 +994,7 @@ func TestForwardAsChatCompletions_DoneSentinelWithoutTerminalReturnsError(t *tes
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
@@ -1023,6 +1039,7 @@ func TestForwardAsChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
+		Extra: map[string]any{codexFingerprintSeedExtraKey: testCodexFingerprintSeed},
 	}
 
 	result, err := svc.ForwardAsChatCompletions(reqCtx, c, account, body, "", "gpt-5.1")
