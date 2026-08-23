@@ -9,8 +9,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBuildTransportWithTLSProfileUsesContentKeyAndUTLSDialer(t *testing.T) {
+	firstProfile := &tlsfingerprint.Profile{CipherSuites: []uint16{0x1301}}
+	secondProfile := &tlsfingerprint.Profile{CipherSuites: []uint16{0x1302}}
+	base := Options{Timeout: time.Second, TLSProfile: firstProfile}
+
+	transport, err := buildTransport(base)
+	require.NoError(t, err)
+	require.NotNil(t, transport.DialTLSContext)
+	require.False(t, transport.ForceAttemptHTTP2)
+
+	changed := base
+	changed.TLSProfile = secondProfile
+	require.NotEqual(t, buildClientKey(base), buildClientKey(changed))
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
