@@ -735,6 +735,7 @@ type OpenAIGatewayService struct {
 	billingCacheService   *BillingCacheService
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
+	tlsFPProfileService   *TLSFingerprintProfileService
 	deferredService       *DeferredService
 	openAITokenProvider   *OpenAITokenProvider
 	grokTokenProvider     *GrokTokenProvider

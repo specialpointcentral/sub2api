@@ -110,6 +110,8 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return nil, buildErr
 		}
 
+		// OpenAI account TLS profiles are intentionally not applied: this branch
+		// sends the compatibility request to Grok's upstream.
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
@@ -1225,6 +1227,8 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 		proxyURL = account.Proxy.URL()
 	}
 
+	// OpenAI account TLS profiles are intentionally not applied: this request
+	// targets Grok even though it serves an OpenAI-compatible ingress route.
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		return "", OpenAIUsage{}, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

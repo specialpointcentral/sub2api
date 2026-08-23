@@ -117,6 +117,8 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
+	// TLS profile does not apply here: despite the OpenAI-compatible ingress,
+	// this native branch dials Anthropic rather than an OpenAI-related upstream.
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)

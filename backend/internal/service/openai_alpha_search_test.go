@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -92,6 +93,9 @@ func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.JSONEq(t, string(body), string(upstream.lastBody))
+	require.Zero(t, upstream.doCalls)
+	require.Equal(t, 1, upstream.doWithTLSCalls)
+	require.Equal(t, tlsfingerprint.PresetChrome120HTTP1, upstream.lastTLSProfile.Preset)
 }
 
 func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
@@ -168,6 +172,9 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Bool())
 	require.Equal(t, "web_search", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
 	require.Contains(t, gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String(), `"search_query"`)
+	require.Zero(t, upstream.doCalls)
+	require.Equal(t, 1, upstream.doWithTLSCalls)
+	require.Equal(t, tlsfingerprint.PresetChrome120HTTP1, upstream.lastTLSProfile.Preset)
 }
 
 func TestForwardAlphaSearchPATBackfillsMissingChatGPTAccountMetadata(t *testing.T) {

@@ -607,6 +607,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	// OpenAI account TLS profiles do not apply to this Grok upstream bridge.
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

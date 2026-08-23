@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/model"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -24,7 +25,10 @@ import (
 )
 
 type codexModelsHTTPUpstreamStub struct {
-	do func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
+	do       func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
+	profile  *tlsfingerprint.Profile
+	doCalls  int
+	tlsCalls int
 }
 
 type codexModelsBlockingBody struct {
@@ -48,11 +52,14 @@ func (b *codexModelsBlockingBody) Read(p []byte) (int, error) {
 func (b *codexModelsBlockingBody) Close() error { return nil }
 
 func (s *codexModelsHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	s.doCalls++
 	return s.do(req, proxyURL, accountID, accountConcurrency)
 }
 
-func (s *codexModelsHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
-	return s.Do(req, proxyURL, accountID, accountConcurrency)
+func (s *codexModelsHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	s.tlsCalls++
+	s.profile = profile
+	return s.do(req, proxyURL, accountID, accountConcurrency)
 }
 
 func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
@@ -426,9 +433,14 @@ func TestFetchCodexModelsManifestAPIKeyCustomUpstream(t *testing.T) {
 	}}
 
 	s := newCodexModelsAPIKeyTestService(upstream)
+	s.tlsFPProfileService = &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		75: {ID: 75, Name: "models custom base override", CipherSuites: []uint16{0x1301}},
+	}}
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example/v1")
+	account.Extra = map[string]any{"tls_fingerprint_profile_id": int64(75)}
 	manifest, err := s.FetchCodexModelsManifest(
 		context.Background(),
-		newCodexModelsAPIKeyTestAccount("https://upstream.example/v1"),
+		account,
 		"0.144.0",
 		"",
 	)
@@ -468,6 +480,12 @@ func TestFetchCodexModelsManifestAPIKeyCustomUpstream(t *testing.T) {
 	}
 	if manifest.ETag != `W/"api-key-manifest"` {
 		t.Errorf("etag not passed through: got %q", manifest.ETag)
+	}
+	if upstream.doCalls != 0 || upstream.tlsCalls != 1 {
+		t.Fatalf("expected one TLS-aware upstream call, do=%d tls=%d", upstream.doCalls, upstream.tlsCalls)
+	}
+	if upstream.profile == nil || upstream.profile.Name != "models custom base override" {
+		t.Fatalf("expected configured OpenAI TLS profile, got %#v", upstream.profile)
 	}
 }
 

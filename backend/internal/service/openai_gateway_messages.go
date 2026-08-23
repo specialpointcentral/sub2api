@@ -381,6 +381,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// Grok may reject encrypted reasoning replayed under a different OAuth
 	// account/cache identity. Match forwardGrokResponses: one strip+retry before
 	// treating the 400 as a hard failure / failover trigger.
+	tlsProfile := s.resolveHTTPUpstreamTLSProfile(account)
 	var resp *http.Response
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
@@ -394,7 +395,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 				return nil, fmt.Errorf("build grok retry request: %w", err)
 			}
 		}
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}

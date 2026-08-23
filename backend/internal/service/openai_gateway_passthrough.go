@@ -315,6 +315,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	agentTaskRecoveryTried := false
+	tlsProfile := s.resolveHTTPUpstreamTLSProfile(account)
 	var resp *http.Response
 	for {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -325,7 +326,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		upstreamStart := time.Now()
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to

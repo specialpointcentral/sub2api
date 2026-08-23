@@ -847,6 +847,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	httpInvalidEncryptedContentRetryTried := false
 	agentTaskRecoveryTried := false
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
+	tlsProfile := s.resolveHTTPUpstreamTLSProfile(account)
 	for {
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -875,7 +876,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {

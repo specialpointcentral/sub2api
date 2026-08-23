@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
@@ -775,6 +777,9 @@ func TestOpenAIGatewayServiceForwardImages_OAuthPassesNAndReturnsAllImages(t *te
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "acct-123", upstream.lastReq.Header.Get("chatgpt-account-id"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Zero(t, upstream.doCalls)
+	require.Equal(t, 1, upstream.doWithTLSCalls)
+	require.Equal(t, tlsfingerprint.PresetChrome120HTTP1, upstream.lastTLSProfile.Preset)
 
 	require.Equal(t, openAIImagesResponsesMainModel, gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
@@ -1248,6 +1253,9 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyGenerationUsesConfiguredV1BaseU
 
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{},
+		tlsFPProfileService: &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+			74: {ID: 74, Name: "images custom base override", CipherSuites: []uint16{0x1301}},
+		}},
 		httpUpstream: &httpUpstreamRecorder{
 			resp: &http.Response{
 				StatusCode: http.StatusOK,
@@ -1271,6 +1279,7 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyGenerationUsesConfiguredV1BaseU
 			"api_key":  "test-api-key",
 			"base_url": "https://image-upstream.example/v1",
 		},
+		Extra: map[string]any{"tls_fingerprint_profile_id": int64(74)},
 	}
 
 	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
@@ -1287,6 +1296,9 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyGenerationUsesConfiguredV1BaseU
 	require.Equal(t, "Bearer test-api-key", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Content-Type"))
 	require.Equal(t, "gpt-image-2", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Zero(t, upstream.doCalls)
+	require.Equal(t, 1, upstream.doWithTLSCalls)
+	require.Equal(t, "images custom base override", upstream.lastTLSProfile.Name)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "aGVsbG8=", gjson.Get(rec.Body.String(), "data.0.b64_json").String())
 }
