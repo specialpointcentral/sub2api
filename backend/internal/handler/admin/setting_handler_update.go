@@ -35,6 +35,40 @@ func validateCodexRectifierSettings(devicePoolSize *int, platformRatio *string, 
 	return nil
 }
 
+func validateOpenAITrafficShapingSettings(req *UpdateSettingsRequest, current *service.SystemSettings) error {
+	if req.OpenAIRequestPacingMinIntervalMS != nil && (*req.OpenAIRequestPacingMinIntervalMS < 0 || *req.OpenAIRequestPacingMinIntervalMS > service.MaxOpenAIRequestPacingIntervalMS) {
+		return errors.New("openai_request_pacing_min_interval_ms must be between 0 and 60000")
+	}
+	if req.OpenAIRequestPacingMaxIntervalMS != nil && (*req.OpenAIRequestPacingMaxIntervalMS < 0 || *req.OpenAIRequestPacingMaxIntervalMS > service.MaxOpenAIRequestPacingIntervalMS) {
+		return errors.New("openai_request_pacing_max_interval_ms must be between 0 and 60000")
+	}
+	minInterval := service.DefaultOpenAIRequestPacingMinIntervalMS
+	maxInterval := service.DefaultOpenAIRequestPacingMaxIntervalMS
+	if current != nil {
+		minInterval = current.OpenAIRequestPacingMinIntervalMS
+		maxInterval = current.OpenAIRequestPacingMaxIntervalMS
+	}
+	if req.OpenAIRequestPacingMinIntervalMS != nil {
+		minInterval = *req.OpenAIRequestPacingMinIntervalMS
+	}
+	if req.OpenAIRequestPacingMaxIntervalMS != nil {
+		maxInterval = *req.OpenAIRequestPacingMaxIntervalMS
+	}
+	if minInterval > maxInterval {
+		return errors.New("openai_request_pacing_min_interval_ms must not exceed openai_request_pacing_max_interval_ms")
+	}
+	if req.OpenAIAccountThreadConcurrencyLimit != nil && (*req.OpenAIAccountThreadConcurrencyLimit < 0 || *req.OpenAIAccountThreadConcurrencyLimit > service.MaxOpenAIAccountThreadConcurrencyLimit) {
+		return errors.New("openai_account_thread_concurrency_limit must be between 0 and 10000")
+	}
+	if req.OpenAIQuotaProbeIntervalMinutes != nil && (*req.OpenAIQuotaProbeIntervalMinutes < 1 || *req.OpenAIQuotaProbeIntervalMinutes > service.MaxOpenAIQuotaProbeIntervalMinutes) {
+		return errors.New("openai_quota_probe_interval_minutes must be between 1 and 1440")
+	}
+	if req.OpenAIQuotaProbeJitterRatio != nil && (*req.OpenAIQuotaProbeJitterRatio < 0 || *req.OpenAIQuotaProbeJitterRatio > service.MaxOpenAIQuotaProbeJitterRatio) {
+		return errors.New("openai_quota_probe_jitter_ratio must be between 0 and 0.5")
+	}
+	return nil
+}
+
 // UpdateSettingsRequest 更新设置请求
 type UpdateSettingsRequest struct {
 	// 注册设置
@@ -258,24 +292,30 @@ type UpdateSettingsRequest struct {
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
 	// Gateway forwarding behavior
-	OpenAITTFTMode                         *string `json:"openai_ttft_mode"`
-	EnableFingerprintUnification           *bool   `json:"enable_fingerprint_unification"`
-	EnableMetadataPassthrough              *bool   `json:"enable_metadata_passthrough"`
-	EnableCCHSigning                       *bool   `json:"enable_cch_signing"`
-	EnableClaudeOAuthSystemPromptInjection *bool   `json:"enable_claude_oauth_system_prompt_injection"`
-	ClaudeOAuthSystemPrompt                *string `json:"claude_oauth_system_prompt"`
-	ClaudeOAuthSystemPromptBlocks          *string `json:"claude_oauth_system_prompt_blocks"`
-	EnableAnthropicCacheTTL1hInjection     *bool   `json:"enable_anthropic_cache_ttl_1h_injection"`
-	RewriteMessageCacheControl             *bool   `json:"rewrite_message_cache_control"`
-	EnableClientDatelineNormalization      *bool   `json:"enable_client_dateline_normalization"`
-	AntigravityUserAgentVersion            *string `json:"antigravity_user_agent_version"`
-	OpenAICodexUserAgent                   *string `json:"openai_codex_user_agent"`
-	OpenAICodexClientVersion               *string `json:"openai_codex_client_version"`
-	OpenAICodexVersionAutoSyncEnabled      *bool   `json:"openai_codex_version_auto_sync_enabled"`
-	OpenAICodexDevicePoolSize              *int    `json:"openai_codex_device_pool_size"`
-	OpenAICodexDevicePoolPlatformRatio     *string `json:"openai_codex_device_pool_platform_ratio"`
-	OpenAICodexUAPersonaEnabled            *bool   `json:"openai_codex_ua_persona_enabled"`
-	OpenAICodexVersionStaggerMaxHours      *int    `json:"openai_codex_version_stagger_max_hours"`
+	OpenAITTFTMode                         *string  `json:"openai_ttft_mode"`
+	EnableFingerprintUnification           *bool    `json:"enable_fingerprint_unification"`
+	EnableMetadataPassthrough              *bool    `json:"enable_metadata_passthrough"`
+	EnableCCHSigning                       *bool    `json:"enable_cch_signing"`
+	EnableClaudeOAuthSystemPromptInjection *bool    `json:"enable_claude_oauth_system_prompt_injection"`
+	ClaudeOAuthSystemPrompt                *string  `json:"claude_oauth_system_prompt"`
+	ClaudeOAuthSystemPromptBlocks          *string  `json:"claude_oauth_system_prompt_blocks"`
+	EnableAnthropicCacheTTL1hInjection     *bool    `json:"enable_anthropic_cache_ttl_1h_injection"`
+	RewriteMessageCacheControl             *bool    `json:"rewrite_message_cache_control"`
+	EnableClientDatelineNormalization      *bool    `json:"enable_client_dateline_normalization"`
+	AntigravityUserAgentVersion            *string  `json:"antigravity_user_agent_version"`
+	OpenAICodexUserAgent                   *string  `json:"openai_codex_user_agent"`
+	OpenAICodexClientVersion               *string  `json:"openai_codex_client_version"`
+	OpenAICodexVersionAutoSyncEnabled      *bool    `json:"openai_codex_version_auto_sync_enabled"`
+	OpenAICodexDevicePoolSize              *int     `json:"openai_codex_device_pool_size"`
+	OpenAICodexDevicePoolPlatformRatio     *string  `json:"openai_codex_device_pool_platform_ratio"`
+	OpenAICodexUAPersonaEnabled            *bool    `json:"openai_codex_ua_persona_enabled"`
+	OpenAICodexVersionStaggerMaxHours      *int     `json:"openai_codex_version_stagger_max_hours"`
+	OpenAIRequestPacingEnabled             *bool    `json:"openai_request_pacing_enabled"`
+	OpenAIRequestPacingMinIntervalMS       *int     `json:"openai_request_pacing_min_interval_ms"`
+	OpenAIRequestPacingMaxIntervalMS       *int     `json:"openai_request_pacing_max_interval_ms"`
+	OpenAIAccountThreadConcurrencyLimit    *int     `json:"openai_account_thread_concurrency_limit"`
+	OpenAIQuotaProbeIntervalMinutes        *int     `json:"openai_quota_probe_interval_minutes"`
+	OpenAIQuotaProbeJitterRatio            *float64 `json:"openai_quota_probe_jitter_ratio"`
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
 	MaxCodexVersion                      string `json:"max_codex_version"`
@@ -1474,6 +1514,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateOpenAITrafficShapingSettings(&req, previousSettings); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	// codex_cli_only 加固：最低/最高 Codex 版本（空=禁用，或合法 semver；max>=min）
 	if req.MinCodexVersion != "" && !semverPattern.MatchString(req.MinCodexVersion) {
 		response.Error(c, http.StatusBadRequest, "min_codex_version must be empty or a valid semver (e.g. 0.141.0)")
@@ -1816,6 +1860,42 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.OpenAICodexVersionStaggerMaxHours
 			}
 			return previousSettings.OpenAICodexVersionStaggerMaxHours
+		}(),
+		OpenAIRequestPacingEnabled: func() bool {
+			if req.OpenAIRequestPacingEnabled != nil {
+				return *req.OpenAIRequestPacingEnabled
+			}
+			return previousSettings.OpenAIRequestPacingEnabled
+		}(),
+		OpenAIRequestPacingMinIntervalMS: func() int {
+			if req.OpenAIRequestPacingMinIntervalMS != nil {
+				return *req.OpenAIRequestPacingMinIntervalMS
+			}
+			return previousSettings.OpenAIRequestPacingMinIntervalMS
+		}(),
+		OpenAIRequestPacingMaxIntervalMS: func() int {
+			if req.OpenAIRequestPacingMaxIntervalMS != nil {
+				return *req.OpenAIRequestPacingMaxIntervalMS
+			}
+			return previousSettings.OpenAIRequestPacingMaxIntervalMS
+		}(),
+		OpenAIAccountThreadConcurrencyLimit: func() int {
+			if req.OpenAIAccountThreadConcurrencyLimit != nil {
+				return *req.OpenAIAccountThreadConcurrencyLimit
+			}
+			return previousSettings.OpenAIAccountThreadConcurrencyLimit
+		}(),
+		OpenAIQuotaProbeIntervalMinutes: func() int {
+			if req.OpenAIQuotaProbeIntervalMinutes != nil {
+				return *req.OpenAIQuotaProbeIntervalMinutes
+			}
+			return previousSettings.OpenAIQuotaProbeIntervalMinutes
+		}(),
+		OpenAIQuotaProbeJitterRatio: func() float64 {
+			if req.OpenAIQuotaProbeJitterRatio != nil {
+				return *req.OpenAIQuotaProbeJitterRatio
+			}
+			return previousSettings.OpenAIQuotaProbeJitterRatio
 		}(),
 		MinCodexVersion:       strings.TrimSpace(req.MinCodexVersion),
 		MaxCodexVersion:       strings.TrimSpace(req.MaxCodexVersion),
@@ -2351,6 +2431,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexDevicePoolPlatformRatio:                     updatedSettings.OpenAICodexDevicePoolPlatformRatio,
 		OpenAICodexUAPersonaEnabled:                            updatedSettings.OpenAICodexUAPersonaEnabled,
 		OpenAICodexVersionStaggerMaxHours:                      updatedSettings.OpenAICodexVersionStaggerMaxHours,
+		OpenAIRequestPacingEnabled:                             updatedSettings.OpenAIRequestPacingEnabled,
+		OpenAIRequestPacingMinIntervalMS:                       updatedSettings.OpenAIRequestPacingMinIntervalMS,
+		OpenAIRequestPacingMaxIntervalMS:                       updatedSettings.OpenAIRequestPacingMaxIntervalMS,
+		OpenAIAccountThreadConcurrencyLimit:                    updatedSettings.OpenAIAccountThreadConcurrencyLimit,
+		OpenAIQuotaProbeIntervalMinutes:                        updatedSettings.OpenAIQuotaProbeIntervalMinutes,
+		OpenAIQuotaProbeJitterRatio:                            updatedSettings.OpenAIQuotaProbeJitterRatio,
 		MinCodexVersion:                                        updatedSettings.MinCodexVersion,
 		MaxCodexVersion:                                        updatedSettings.MaxCodexVersion,
 		CodexCLIOnlyBlacklist:                                  updatedSettings.CodexCLIOnlyBlacklist,

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -41,7 +43,10 @@ const (
 	// 等待队列计数器格式: concurrency:wait:{userID}
 	waitQueueKeyPrefix = "concurrency:wait:"
 	// 账号级等待队列计数器格式: wait:account:{accountID}
-	accountWaitKeyPrefix = "wait:account:"
+	accountWaitKeyPrefix               = "wait:account:"
+	openAIRequestPacingKeyPrefix       = "traffic:openai:pacing:"
+	openAIRequestPacingCancelKeyPrefix = "traffic:openai:pacing_cancel:"
+	openAIQuotaProbeKeyPrefix          = "traffic:openai:quota_probe:"
 
 	// 默认槽位过期时间（分钟），可通过配置覆盖
 	defaultSlotTTLMinutes = 15
@@ -226,6 +231,82 @@ var (
 		return 0
 	`)
 
+	// reserveOpenAIRequestStartScript atomically admits only an eligible caller.
+	// Waiting/canceled callers do not advance the shared gate.
+	reserveOpenAIRequestStartScript = redis.NewScript(`
+		redis.replicate_commands()
+		local key = KEYS[1]
+		local cancelKey = KEYS[2]
+		local interval = tonumber(ARGV[1])
+		local deadline = tonumber(ARGV[2])
+		local ownerToken = ARGV[3]
+		local redisTime = redis.call('TIME')
+		local now = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
+		if now >= deadline then
+			return -1
+		end
+		if redis.call('EXISTS', cancelKey) == 1 then
+			return -1
+		end
+		local raw = redis.call('GET', key)
+		local nextStart = nil
+		if raw ~= false then
+			local separator = string.find(raw, ':', 1, true)
+			if separator ~= nil then
+				nextStart = tonumber(string.sub(raw, 1, separator - 1))
+			else
+				nextStart = tonumber(raw)
+			end
+		end
+		if nextStart ~= nil and nextStart > now then
+			return nextStart - now
+		end
+		local followingStart = now + interval
+		local ttl = math.max(60, math.ceil((followingStart - now) / 1000) + 60)
+		redis.call('SET', key, tostring(followingStart) .. ':' .. ownerToken, 'EX', ttl)
+		return 0
+	`)
+
+	rollbackOpenAIRequestStartScript = redis.NewScript(`
+		local key = KEYS[1]
+		local cancelKey = KEYS[2]
+		local ownerToken = ARGV[1]
+		redis.call('SET', cancelKey, '1', 'EX', 90)
+		local raw = redis.call('GET', key)
+		if raw == false then
+			return 0
+		end
+		local separator = string.find(raw, ':', 1, true)
+		if separator == nil or string.sub(raw, separator + 1) ~= ownerToken then
+			return 0
+		end
+		redis.call('DEL', key)
+		return 1
+	`)
+
+	tryClaimOpenAIQuotaProbeScript = redis.NewScript(`
+		redis.replicate_commands()
+		local key = KEYS[1]
+		local interval = tonumber(ARGV[1])
+		local scheduleVersion = ARGV[2]
+		local initialNotBefore = tonumber(ARGV[3]) or 0
+		local redisTime = redis.call('TIME')
+		local now = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
+		local currentVersion = redis.call('HGET', key, 'schedule_version')
+		local nextProbeAt = tonumber(redis.call('HGET', key, 'next_probe_at_ms'))
+		if currentVersion == false and initialNotBefore > now then
+			redis.call('HSET', key, 'schedule_version', scheduleVersion, 'next_probe_at_ms', initialNotBefore)
+			redis.call('PEXPIRE', key, math.max(interval, initialNotBefore - now) + 86400000)
+			return 0
+		end
+		if currentVersion == scheduleVersion and nextProbeAt ~= nil and nextProbeAt > now then
+			return 0
+		end
+		redis.call('HSET', key, 'schedule_version', scheduleVersion, 'next_probe_at_ms', now + interval)
+		redis.call('PEXPIRE', key, interval + 86400000)
+		return 1
+	`)
+
 	// refreshOpenAIWSIngressLeaseScript does not recreate a missing member: a
 	// process that lost its lease must terminate its local WebSocket instead of
 	// silently continuing beyond the distributed cap.
@@ -404,6 +485,18 @@ func liveAPIKeySlotKey(apiKeyID int64) string {
 
 func openAIWSIngressLeaseKey(apiKeyID int64) string {
 	return fmt.Sprintf("%s%d", openAIWSIngressLeaseKeyPrefix, apiKeyID)
+}
+
+func openAIRequestPacingKey(accountID int64) string {
+	return fmt.Sprintf("%s%d", openAIRequestPacingKeyPrefix, accountID)
+}
+
+func openAIRequestPacingCancelKey(accountID int64, ownerToken string) string {
+	return fmt.Sprintf("%s%d:%s", openAIRequestPacingCancelKeyPrefix, accountID, ownerToken)
+}
+
+func openAIQuotaProbeKey(accountID int64) string {
+	return fmt.Sprintf("%s%d", openAIQuotaProbeKeyPrefix, accountID)
 }
 
 func waitQueueKey(userID int64) string {
@@ -640,6 +733,51 @@ func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int
 		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, now+int64(c.slotTTLSeconds))
 	}
 	return result == 1, nil
+}
+
+func (c *concurrencyCache) ReserveOpenAIOAuthStart(ctx context.Context, accountID int64, interval time.Duration, deadline time.Time, ownerToken string) (time.Duration, error) {
+	intervalMS := interval.Milliseconds()
+	if intervalMS < 0 || deadline.IsZero() || strings.TrimSpace(ownerToken) == "" {
+		return 0, errors.New("openai request pacing interval, deadline, and owner token are required")
+	}
+	waitMS, err := reserveOpenAIRequestStartScript.Run(ctx, c.rdb, []string{
+		openAIRequestPacingKey(accountID),
+		openAIRequestPacingCancelKey(accountID, ownerToken),
+	}, intervalMS, deadline.UnixMilli(), ownerToken).Int64()
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(waitMS) * time.Millisecond, nil
+}
+
+func (c *concurrencyCache) RollbackOpenAIOAuthStart(ctx context.Context, accountID int64, ownerToken string) (bool, error) {
+	if strings.TrimSpace(ownerToken) == "" {
+		return false, errors.New("openai request pacing owner token is required")
+	}
+	rolledBack, err := rollbackOpenAIRequestStartScript.Run(ctx, c.rdb, []string{
+		openAIRequestPacingKey(accountID),
+		openAIRequestPacingCancelKey(accountID, ownerToken),
+	}, ownerToken).Int()
+	if err != nil {
+		return false, err
+	}
+	return rolledBack == 1, nil
+}
+
+func (c *concurrencyCache) TryClaimOpenAIQuotaProbe(ctx context.Context, accountID int64, interval time.Duration, scheduleVersion string, initialNotBefore time.Time) (bool, error) {
+	intervalMS := interval.Milliseconds()
+	if intervalMS <= 0 || strings.TrimSpace(scheduleVersion) == "" {
+		return false, errors.New("openai quota probe interval and schedule version are required")
+	}
+	initialNotBeforeMS := int64(0)
+	if !initialNotBefore.IsZero() {
+		initialNotBeforeMS = initialNotBefore.UnixMilli()
+	}
+	claimed, err := tryClaimOpenAIQuotaProbeScript.Run(ctx, c.rdb, []string{openAIQuotaProbeKey(accountID)}, intervalMS, scheduleVersion, initialNotBeforeMS).Int()
+	if err != nil {
+		return false, err
+	}
+	return claimed == 1, nil
 }
 
 func (c *concurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int64, requestID string) error {
