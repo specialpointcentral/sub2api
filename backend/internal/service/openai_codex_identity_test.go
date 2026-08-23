@@ -316,8 +316,33 @@ func TestNormalizeCodexClientVersion(t *testing.T) {
 	require.Empty(t, NormalizeCodexClientVersion("latest"))
 }
 
+func TestCodexSandboxForUserAgent(t *testing.T) {
+	tests := []struct {
+		name      string
+		userAgent string
+		want      string
+	}{
+		{name: "Ubuntu", userAgent: "codex-tui/0.149.0 (Ubuntu 22.4.0; x86_64) xterm-256color", want: "seccomp"},
+		{name: "Linux", userAgent: "codex_exec/0.149.0 (Linux 6.8; x86_64) xterm-256color", want: "seccomp"},
+		{name: "Mac", userAgent: "codex-tui/0.149.0 (Mac OS X 14.0; arm64) iTerm", want: "seatbelt"},
+		{name: "unknown OS", userAgent: "codex-tui/0.149.0 xterm-256color", want: ""},
+		{name: "Windows Emacs is not Mac", userAgent: "codex-tui/0.149.0 (Windows 11; x86_64) Emacs", want: ""},
+		{name: "unknown platform ignores Mac trailer text", userAgent: "codex-tui/0.149.0 (Haiku 1.0; x86_64) term (mac-helper; 1.0)", want: ""},
+		{name: "Windows platform wins over Linux trailer text", userAgent: "codex-tui/0.149.0 (Windows 11; x86_64) term (linux-helper; 1.0)", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, codexSandboxForUserAgent(tt.userAgent))
+		})
+	}
+}
+
 func TestBuildCodexCLIUserAgent(t *testing.T) {
-	require.Equal(t, openai.CodexDefaultOriginator+"/0.200.1"+codexCLIUserAgentSuffix, buildCodexCLIUserAgent("0.200.1"))
+	require.Equal(t,
+		openai.CodexDefaultOriginator+"/0.200.1"+codexCLIUserAgentSuffix+" (codex-tui; 0.200.1)",
+		buildCodexCLIUserAgent("0.200.1"),
+	)
 	// 非法版本号必须回退到内置 UA，不能拼出畸形身份。
 	require.Equal(t, codexCLIUserAgent, buildCodexCLIUserAgent("bogus version"))
 	require.Equal(t, codexCLIUserAgent, buildCodexCLIUserAgent(""))
@@ -343,6 +368,9 @@ func TestCodexCanonicalUserAgentFollowsResolver(t *testing.T) {
 func TestCodexCanonicalUserAgentFallsBackWithoutResolver(t *testing.T) {
 	SetCodexCanonicalUserAgentResolver(nil)
 
-	require.Equal(t, codexCLIUserAgent, CodexCanonicalUserAgent())
+	require.Equal(t,
+		openai.CodexDefaultOriginator+"/"+codexCLIVersion+codexCLIUserAgentSuffix+" (codex-tui; "+codexCLIVersion+")",
+		CodexCanonicalUserAgent(),
+	)
 	require.Equal(t, codexCLIVersion, CodexCanonicalClientVersion())
 }
