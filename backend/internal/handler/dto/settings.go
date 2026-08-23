@@ -216,6 +216,10 @@ type SystemSettings struct {
 	OpenAICodexClientVersion               string `json:"openai_codex_client_version"`
 	OpenAICodexClientVersionSynced         string `json:"openai_codex_client_version_synced"`
 	OpenAICodexVersionAutoSyncEnabled      bool   `json:"openai_codex_version_auto_sync_enabled"`
+	OpenAICodexDevicePoolSize              int    `json:"openai_codex_device_pool_size"`
+	OpenAICodexDevicePoolPlatformRatio     string `json:"openai_codex_device_pool_platform_ratio"`
+	OpenAICodexUAPersonaEnabled            bool   `json:"openai_codex_ua_persona_enabled"`
+	OpenAICodexVersionStaggerMaxHours      int    `json:"openai_codex_version_stagger_max_hours"`
 
 	// codex_cli_only 加固
 	MinCodexVersion                      string `json:"min_codex_version"`
