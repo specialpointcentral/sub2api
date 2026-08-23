@@ -241,6 +241,10 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAICodexClientVersion:                           "",
 		SettingKeyOpenAICodexClientVersionSynced:                     "",
 		SettingKeyOpenAICodexVersionAutoSyncEnabled:                  "true",
+		SettingKeyOpenAICodexDevicePoolSize:                          "1",
+		SettingKeyOpenAICodexDevicePoolPlatformRatio:                 defaultOpenAICodexDevicePoolPlatformRatio,
+		SettingKeyOpenAICodexUAPersonaEnabled:                        "false",
+		SettingKeyOpenAICodexVersionStaggerMaxHours:                  "0",
 		SettingPaymentVisibleMethodAlipaySource:                      "",
 		SettingPaymentVisibleMethodWxpaySource:                       "",
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
@@ -882,6 +886,21 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	} else {
 		result.OpenAICodexVersionAutoSyncEnabled = true
 	}
+	result.OpenAICodexDevicePoolSize = 1
+	if value, err := strconv.Atoi(strings.TrimSpace(settings[SettingKeyOpenAICodexDevicePoolSize])); err == nil {
+		result.OpenAICodexDevicePoolSize = normalizeOpenAICodexDevicePoolSize(value)
+	}
+	result.OpenAICodexDevicePoolPlatformRatio = defaultOpenAICodexDevicePoolPlatformRatio
+	if ratio, ok := NormalizeCodexDevicePlatformRatio(settings[SettingKeyOpenAICodexDevicePoolPlatformRatio]); ok {
+		result.OpenAICodexDevicePoolPlatformRatio = ratio
+	}
+	result.OpenAICodexUAPersonaEnabled = strings.TrimSpace(settings[SettingKeyOpenAICodexUAPersonaEnabled]) == "true"
+	if value, err := strconv.Atoi(strings.TrimSpace(settings[SettingKeyOpenAICodexVersionStaggerMaxHours])); err == nil && value >= 0 {
+		if value > 48 {
+			value = 48
+		}
+		result.OpenAICodexVersionStaggerMaxHours = value
+	}
 	// codex_cli_only 加固
 	result.MinCodexVersion = settings[SettingKeyMinCodexVersion]
 	result.MaxCodexVersion = settings[SettingKeyMaxCodexVersion]
@@ -986,6 +1005,13 @@ func normalizeOpenAITTFTMode(mode string) string {
 		return OpenAITTFTModeVisible
 	}
 	return OpenAITTFTModeSemantic
+}
+
+func normalizeOpenAICodexDevicePoolSize(value int) int {
+	if value == 1 || (value >= 3 && value <= 8) {
+		return value
+	}
+	return 1
 }
 
 func clampAffiliateRebateRate(value float64) float64 {

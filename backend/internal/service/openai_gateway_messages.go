@@ -234,7 +234,24 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
-		applyCodexAccountIdentityClientMetadataMap(reqBody, codexAccountIdentitySource(c, account), apiKeyID)
+		stageCodexFingerprintIDs(c, nil)
+		var clientHeaders http.Header
+		if c != nil && c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		clientHeaders = withCodexFingerprintSessionHint(clientHeaders, codexFingerprintSessionHint(reqBody["client_metadata"], promptCacheKey))
+		fpIDs, fpResolveErr := s.resolveCodexFingerprintIDsForOutbound(c, account, clientHeaders, false)
+		if fpResolveErr != nil {
+			return nil, fmt.Errorf("resolve outbound codex fingerprint: %w", fpResolveErr)
+		}
+		if fpIDs != nil {
+			// Messages compatibility intentionally removes prompt_cache_key from the
+			// translated body. Use its method-level value only as the last-resort
+			// original session, after header/client_metadata resolution has failed.
+			captureCodexFingerprintPromptCacheKeyFallback(fpIDs, promptCacheKey)
+			applyCodexFingerprintClientMetadata(reqBody, fpIDs)
+		}
+		stageCodexFingerprintIDs(c, fpIDs)
 		delete(reqBody, "prompt_cache_key")
 		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 			compatTurnState = s.getOpenAICompatSessionTurnState(ctx, c, account, promptCacheKey)
@@ -346,8 +363,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// Override session_id with a deterministic UUID derived from the isolated
 	// session key, ensuring different API keys produce different upstream sessions.
-	if account.Platform != PlatformGrok && promptCacheKey != "" {
-		isolatedSessionID := generateSessionUUID(isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey))
+	stagedIDs := stagedCodexFingerprintIDs(c, account)
+	if account.Platform != PlatformGrok && promptCacheKey != "" && (account.Type != AccountTypeOAuth || stagedIDs == nil || stagedIDs.sessionID == "") {
+		isolatedSessionID := generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey))
 		upstreamReq.Header.Set("session_id", isolatedSessionID)
 		if upstreamReq.Header.Get("conversation_id") != "" {
 			upstreamReq.Header.Set("conversation_id", isolatedSessionID)
@@ -358,7 +376,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		// 清除身份头。真正发送前恢复完整 Codex 身份，避免 ChatGPT Codex 上游因缺失
 		// originator/OpenAI-Beta 返回 404（issue #3901）。
 		ensureCodexIdentityHeaders(upstreamReq.Header)
-		enforceCodexIdentityHeaders(upstreamReq.Header)
+		inboundUserAgent := ""
+		if c != nil && c.Request != nil {
+			inboundUserAgent = c.Request.Header.Get("user-agent")
+		}
+		uaDecision := s.resolveCodexOutboundUserAgentDecision(account, inboundUserAgent, stagedCodexFingerprintUserAgent(c, account))
+		enforceCodexIdentityHeadersWithUA(upstreamReq.Header, uaDecision.identityOverride)
 		logger.L().Debug("openai messages: upstream identity restored",
 			zap.Int64("account_id", account.ID),
 			zap.String("upstream_model", upstreamModel),

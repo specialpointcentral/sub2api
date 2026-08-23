@@ -4,6 +4,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -147,4 +149,91 @@ RETURNING id
 	for i, want := range firstSeeds {
 		require.Equal(t, want, readSeed(ids[i]), "retry must not rotate an existing valid seed")
 	}
+}
+
+func TestEnsureCodexFingerprintSeedDerivesFromUpstreamIdentity(t *testing.T) {
+	ctx := context.Background()
+	repo := newAccountRepositoryWithSQL(integrationEntClient, integrationDB, nil)
+	namespace := uuid.MustParse("658acd9b-1433-4b66-bcbc-75dea238d3fa")
+	createdIDs := make([]int64, 0, 8)
+	t.Cleanup(func() {
+		for _, id := range createdIDs {
+			_, _ = integrationDB.ExecContext(ctx, "DELETE FROM accounts WHERE id = $1", id)
+		}
+	})
+
+	insert := func(t *testing.T, name, accountType, credentials, extra string) int64 {
+		t.Helper()
+		var id int64
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+INSERT INTO accounts (name, platform, type, credentials, extra)
+VALUES ($1, 'openai', $2, $3::jsonb, $4::jsonb)
+RETURNING id
+`, name, accountType, credentials, extra).Scan(&id))
+		createdIDs = append(createdIDs, id)
+		return id
+	}
+
+	// OAuth with chatgpt account id and user id derives the same UUIDv5 as the Go hook.
+	oauthUser := insert(t, "it-derive-oauth-user", "oauth",
+		`{"access_token":"tok","chatgpt_account_id":"it-acc-1","chatgpt_user_id":"user-1"}`,
+		`{"codex_fingerprint_mode":"session"}`)
+	seed, err := repo.EnsureCodexFingerprintSeed(ctx, oauthUser)
+	require.NoError(t, err)
+	require.Equal(t, uuid.NewSHA1(namespace, []byte("chatgpt:it-acc-1:user:user-1")).String(), seed)
+
+	// Without user id the namespace drops the user segment.
+	oauthNoUser := insert(t, "it-derive-oauth-nouser", "oauth",
+		`{"access_token":"tok","chatgpt_account_id":"it-acc-1"}`,
+		`{"codex_fingerprint_mode":"session"}`)
+	seed, err = repo.EnsureCodexFingerprintSeed(ctx, oauthNoUser)
+	require.NoError(t, err)
+	require.Equal(t, uuid.NewSHA1(namespace, []byte("chatgpt:it-acc-1")).String(), seed)
+
+	// A duplicate row on the same ChatGPT account converges on the identical seed.
+	oauthDup := insert(t, "it-derive-oauth-dup", "oauth",
+		`{"access_token":"tok-2","chatgpt_account_id":"it-acc-1"}`,
+		`{"codex_fingerprint_mode":"full"}`)
+	seed, err = repo.EnsureCodexFingerprintSeed(ctx, oauthDup)
+	require.NoError(t, err)
+	require.Equal(t, uuid.NewSHA1(namespace, []byte("chatgpt:it-acc-1")).String(), seed)
+
+	// Off-mode rows ensured through SQL paths derive too.
+	offID := insert(t, "it-derive-off", "oauth",
+		`{"access_token":"tok","chatgpt_account_id":"it-acc-off"}`,
+		`{"codex_fingerprint_mode":"off"}`)
+	seed, err = repo.EnsureCodexFingerprintSeed(ctx, offID)
+	require.NoError(t, err)
+	require.Equal(t, uuid.NewSHA1(namespace, []byte("chatgpt:it-acc-off")).String(), seed)
+
+	// Pi-only API key rows derive from the upstream key fingerprint.
+	apiKeySum := sha256.Sum256([]byte("openai-api-key:it-sk-pi-only"))
+	apiKeyID := insert(t, "it-derive-apikey", "apikey",
+		`{"api_key":"it-sk-pi-only"}`,
+		`{"codex_fingerprint_mode":"session"}`)
+	seed, err = repo.EnsureCodexFingerprintSeed(ctx, apiKeyID)
+	require.NoError(t, err)
+	require.Equal(t, uuid.NewSHA1(namespace, []byte(fmt.Sprintf("api-key:%x", apiKeySum[:16]))).String(), seed)
+
+	// An existing random seed is never touched.
+	existingID := insert(t, "it-derive-existing", "oauth",
+		`{"access_token":"tok","chatgpt_account_id":"it-acc-1"}`,
+		`{"codex_fingerprint_mode":"session","codex_fingerprint_seed":"11111111-1111-4111-8111-111111111111"}`)
+	seed, err = repo.EnsureCodexFingerprintSeed(ctx, existingID)
+	require.NoError(t, err)
+	require.Equal(t, "11111111-1111-4111-8111-111111111111", seed)
+
+	// No recognizable upstream identity falls back to distinct random seeds.
+	randomA := insert(t, "it-derive-random-a", "oauth", `{"access_token":"tok"}`, `{"codex_fingerprint_mode":"session"}`)
+	randomB := insert(t, "it-derive-random-b", "oauth", `{"access_token":"tok"}`, `{"codex_fingerprint_mode":"session"}`)
+	seedA, err := repo.EnsureCodexFingerprintSeed(ctx, randomA)
+	require.NoError(t, err)
+	seedB, err := repo.EnsureCodexFingerprintSeed(ctx, randomB)
+	require.NoError(t, err)
+	require.NotEqual(t, seedA, seedB)
+
+	// Repeat ensures are stable (first writer wins).
+	seed, err = repo.EnsureCodexFingerprintSeed(ctx, oauthNoUser)
+	require.NoError(t, err)
+	require.Equal(t, uuid.NewSHA1(namespace, []byte("chatgpt:it-acc-1")).String(), seed)
 }
