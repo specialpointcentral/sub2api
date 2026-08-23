@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -52,6 +53,35 @@ func TestDeriveStableUUIDv4_ValidFormat(t *testing.T) {
 	require.NoError(t, err, "应返回合法 UUID 格式")
 	assert.Equal(t, uuid.Version(4), parsed.Version(), "应为 UUIDv4")
 	assert.Equal(t, uuid.RFC4122, parsed.Variant(), "应为 RFC4122 变体")
+}
+
+func TestDeriveStableUUIDv7Golden(t *testing.T) {
+	require.Equal(t, "ef2550e2-5c74-790c-b75d-f259aae65dda", deriveStableUUIDv7("fixed-uuidv7-seed"))
+}
+
+func TestConvergedCodexIdentityUUIDVersions(t *testing.T) {
+	account := newTestOAuthAccount(7, map[string]any{codexFingerprintModeExtraKey: "session"})
+	seed, ok := codexFingerprintSeed(account.Extra)
+	require.True(t, ok)
+
+	tests := []struct {
+		name    string
+		value   string
+		version uuid.Version
+	}{
+		{name: "installation", value: resolveConvergedInstallationID(account, seed), version: uuid.Version(4)},
+		{name: "session", value: resolveConvergedSessionID(seed), version: uuid.Version(7)},
+		{name: "thread", value: resolveConvergedThreadID(seed, "real-client-session"), version: uuid.Version(7)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := uuid.Parse(tt.value)
+			require.NoError(t, err)
+			require.Equal(t, tt.version, parsed.Version())
+			require.Equal(t, uuid.RFC4122, parsed.Variant())
+		})
+	}
 }
 
 // --- GetCodexFingerprintMode ---
@@ -367,6 +397,51 @@ func TestFingerprintIDs_HeaderAndBody_TurnID_Consistent(t *testing.T) {
 	assert.Equal(t, headerMeta["turn_started_at_unix_ms"], bodyMeta["turn_started_at_unix_ms"], "头和体的 timestamp 必须一致")
 	assert.Equal(t, float64(fixedTurnStartedAtUnixMs), headerMeta["turn_started_at_unix_ms"])
 	assert.Equal(t, float64(fixedTurnStartedAtUnixMs), bodyMeta["turn_started_at_unix_ms"])
+}
+
+func TestCodexFingerprintRootTurnLinkage_MapRawAndHeader(t *testing.T) {
+	account := newTestOAuthAccount(8, map[string]any{codexFingerprintModeExtraKey: "session"})
+	ids := resolveCodexFingerprintIDs(account, "client-root-linkage", codexFingerprintSession)
+	require.NotNil(t, ids)
+
+	tests := []struct {
+		name             string
+		originalRootTurn string
+		wantRootTurn     string
+	}{
+		{name: "root turn follows rewritten turn", originalRootTurn: "old-turn", wantRootTurn: ids.turnID},
+		{name: "child turn preserves parent root", originalRootTurn: "parent-root-turn", wantRootTurn: "parent-root-turn"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedded := fmt.Sprintf(`{"turn_id":"old-turn","root_turn_id":%q,"request_kind":"user"}`, tt.originalRootTurn)
+			body := []byte(fmt.Sprintf(`{"client_metadata":{"turn_id":"old-turn","root_turn_id":%q,"x-codex-turn-metadata":%q}}`, tt.originalRootTurn, embedded))
+			mapBody, rawBody := applyMapAndRawFingerprintBodiesForTest(t, body, ids)
+			require.Equal(t, mapBody, rawBody, "map 与 raw 字节路径必须等价")
+
+			mapClientMetadata, ok := mapBody["client_metadata"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, ids.turnID, mapClientMetadata["turn_id"])
+			require.Equal(t, tt.wantRootTurn, mapClientMetadata["root_turn_id"])
+
+			bodyEmbeddedRaw, ok := mapClientMetadata["x-codex-turn-metadata"].(string)
+			require.True(t, ok)
+			var bodyEmbedded map[string]any
+			require.NoError(t, json.Unmarshal([]byte(bodyEmbeddedRaw), &bodyEmbedded))
+			require.Equal(t, ids.turnID, bodyEmbedded["turn_id"])
+			require.Equal(t, tt.wantRootTurn, bodyEmbedded["root_turn_id"])
+
+			header := make(http.Header)
+			header.Set("x-codex-turn-metadata", fmt.Sprintf(`{"turn_id":"old-turn","root_turn_id":%q,"request_kind":"user"}`, tt.originalRootTurn))
+			applyCodexFingerprintHeaders(header, ids)
+			var headerEmbedded map[string]any
+			require.NoError(t, json.Unmarshal([]byte(header.Get("x-codex-turn-metadata")), &headerEmbedded))
+			require.Equal(t, ids.turnID, headerEmbedded["turn_id"])
+			require.Equal(t, tt.wantRootTurn, headerEmbedded["root_turn_id"])
+			require.Equal(t, bodyEmbedded["root_turn_id"], headerEmbedded["root_turn_id"])
+		})
+	}
 }
 
 func TestFingerprintIDs_MalformedEmbeddedMetadataRebuiltConsistently(t *testing.T) {
@@ -889,7 +964,7 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	c.Request.Header.Set("x-codex-turn-metadata", `{"installation_id":"real-install","session_id":"real-session","sandbox":"seatbelt"}`)
 
 	// 复刻 forwardOpenAIPassthrough 的解析+暂存 seam（默认 session 模式）
-	ids := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
+	ids := svc.resolveCodexFingerprintIDsForOutbound(account, c.Request.Header, true)
 	require.NotNil(t, ids)
 	stageCodexFingerprintIDs(c, ids)
 
@@ -897,6 +972,7 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	req, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, body, "test-token")
 	require.NoError(t, err)
 
+	assert.Equal(t, codexCLIUserAgent, req.Header.Get("user-agent"))
 	assert.Equal(t, ids.sessionID, req.Header.Get("session_id"), "session 模式下出站 session_id 应为账号级收敛值")
 	assert.Equal(t, ids.installationID, req.Header.Get("x-codex-installation-id"))
 	assert.Equal(t, ids.windowID, req.Header.Get("x-codex-window-id"))
@@ -904,7 +980,7 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	turnMetadata := req.Header.Get("x-codex-turn-metadata")
 	require.NotEmpty(t, turnMetadata)
 	assert.Contains(t, turnMetadata, ids.sessionID, "turn-metadata JSON 中的 session_id 应被收敛")
-	assert.Contains(t, turnMetadata, `"sandbox":"seatbelt"`, "turn-metadata 未指定字段应原样保留")
+	assert.Contains(t, turnMetadata, `"sandbox":"seccomp"`, "turn-metadata sandbox 应与最终 Ubuntu UA 一致")
 }
 
 func TestBuildUpstreamRequestOpenAIPassthrough_OffModeKeepsIsolatedSession(t *testing.T) {
