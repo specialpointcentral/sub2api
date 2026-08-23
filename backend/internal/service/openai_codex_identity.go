@@ -296,6 +296,31 @@ type codexOutboundIdentity struct {
 	version    string
 }
 
+type codexOutboundUserAgentDecision struct {
+	userAgent        string
+	identityOverride string
+}
+
+// resolveCodexOutboundUserAgentDecision is the single priority chain shared by
+// fingerprint parsing and its HTTP/WS inference transports. identityOverride excludes
+// the inbound UA because strong identity enforcement intentionally ignores
+// client self-reported identity; account and staged persona UAs are explicit
+// gateway decisions and remain eligible inputs to the canonical rebuild.
+func (s *OpenAIGatewayService) resolveCodexOutboundUserAgentDecision(account *Account, inboundUA, fingerprintUA string) codexOutboundUserAgentDecision {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+		return codexOutboundUserAgentDecision{userAgent: CodexCanonicalUserAgent()}
+	}
+	if account != nil {
+		if customUA := strings.TrimSpace(account.GetOpenAIUserAgent()); customUA != "" {
+			return codexOutboundUserAgentDecision{userAgent: customUA, identityOverride: customUA}
+		}
+	}
+	if fingerprintUA = strings.TrimSpace(fingerprintUA); fingerprintUA != "" {
+		return codexOutboundUserAgentDecision{userAgent: fingerprintUA, identityOverride: fingerprintUA}
+	}
+	return codexOutboundUserAgentDecision{userAgent: strings.TrimSpace(inboundUA)}
+}
+
 // resolveCodexOutboundIdentity 由候选 User-Agent 推导自洽的出站身份。
 // candidateUA 为空时使用规范 User-Agent；推导不出官方身份时整体回退为规范 TUI 身份。
 //
