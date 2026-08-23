@@ -34,7 +34,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
-
 	// 入口分流（国产供应商 Anthropic 协议）：上游为供应商原生 Anthropic 端点时，
 	// /v1/messages 请求零转换直通（仅模型名映射 + 少量 body 清洗），完整保留
 	// thinking / tool_use / cache 语义，适配 Claude Code 等原生客户端。
@@ -312,6 +311,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			return nil, fmt.Errorf("apply grok Free function-tool cache route: %w", patchErr)
 		}
 	}
+	responsesBody, err = s.applyOpenAINonCodexPiHTTPProjection(c, account, responsesBody)
+	if err != nil {
+		return nil, fmt.Errorf("apply pi-normalize HTTP projection: %w", err)
+	}
 
 	// 5. Get access token
 	token, _, err := s.getRequestCredential(ctx, c, account)
@@ -365,6 +368,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 	if compatTurnState != "" && upstreamReq.Header.Get("x-codex-turn-state") == "" {
 		upstreamReq.Header.Set("x-codex-turn-state", compatTurnState)
+	}
+	if projection := stagedOpenAINonCodexPiProjection(c); projection != nil {
+		applyOpenAINonCodexPiHeadersProjection(upstreamReq.Header, *projection)
 	}
 
 	// 7. Send request

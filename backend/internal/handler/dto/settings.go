@@ -219,7 +219,6 @@ type SystemSettings struct {
 	OpenAICodexDevicePoolPlatformRatio     string `json:"openai_codex_device_pool_platform_ratio"`
 	OpenAICodexUAPersonaEnabled            bool   `json:"openai_codex_ua_persona_enabled"`
 	OpenAICodexVersionStaggerMaxHours      int    `json:"openai_codex_version_stagger_max_hours"`
-
 	// codex_cli_only 加固
 	MinCodexVersion                      string `json:"min_codex_version"`
 	MaxCodexVersion                      string `json:"max_codex_version"`
