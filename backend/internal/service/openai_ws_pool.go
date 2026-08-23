@@ -2077,11 +2077,11 @@ func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Head
 	if profile != nil {
 		key.tlsProfileID = profile.StableID()
 	}
-	if account != nil && account.IsOpenAIOAuth() {
+	mode := activeCodexFingerprintMode(account)
+	if account != nil && (account.IsOpenAIOAuth() || (account.IsOpenAIApiKey() && mode != codexFingerprintOff)) {
 		key.sessionIDHyphen = normalizeOpenAIWSStableIdentityHeader(headers, "session-id")
 		key.sessionIDUnderscore = normalizeOpenAIWSStableIdentityHeader(headers, "session_id")
 	}
-	mode := activeCodexFingerprintMode(account)
 	if mode == codexFingerprintOff {
 		return key
 	}

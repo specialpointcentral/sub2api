@@ -2240,9 +2240,9 @@
         </div>
       </div>
 
-      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
+      <!-- Codex 指纹收敛模式（OpenAI OAuth / API Key） -->
       <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth'"
+        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -2254,6 +2254,24 @@
           </div>
           <div class="w-52 flex-shrink-0">
             <Select v-model="codexFingerprintMode" data-testid="edit-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 非 Codex 流量策略（OpenAI OAuth / API Key） -->
+      <div
+        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'apikey')"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.nonCodexTrafficPolicy') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.nonCodexTrafficPolicyDesc') }}
+            </p>
+          </div>
+          <div class="w-52 flex-shrink-0">
+            <Select v-model="nonCodexTrafficPolicy" data-testid="edit-non-codex-traffic-policy-select" :options="nonCodexTrafficPolicyOptions" />
           </div>
         </div>
       </div>
@@ -3446,6 +3464,8 @@ const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+type NonCodexTrafficPolicy = 'off' | 'pi'
+const nonCodexTrafficPolicy = ref<NonCodexTrafficPolicy>('off')
 type CodexImageToolMode = 'inherit' | 'enabled' | 'disabled' | 'block'
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
@@ -3482,6 +3502,10 @@ const codexFingerprintModeOptions = computed(() => [
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
   { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
   { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
+])
+const nonCodexTrafficPolicyOptions = computed(() => [
+  { value: 'off' as NonCodexTrafficPolicy, label: t('admin.accounts.openai.nonCodexTrafficOff') },
+  { value: 'pi' as NonCodexTrafficPolicy, label: t('admin.accounts.openai.nonCodexTrafficPi') },
 ])
 
 const openAIWSModeOptions = computed(() => [
@@ -3928,6 +3952,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
+  nonCodexTrafficPolicy.value = 'off'
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -3979,12 +4004,13 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       codexCLIOnlyAppServerEnabled.value =
         extra?.codex_cli_only_allow_app_server === true
     }
-    if (newAccount.type === 'oauth') {
+    if (newAccount.type === 'oauth' || newAccount.type === 'apikey') {
       const fpMode = extra?.codex_fingerprint_mode as string | undefined
       // 缺省/非法值按 off 呈现，与后端 GetCodexFingerprintMode 的 opt-in 语义一致（#5610）
       codexFingerprintMode.value = (['off', 'device', 'session', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
         : 'off')
+      nonCodexTrafficPolicy.value = extra?.non_codex_traffic_policy === 'pi' ? 'pi' : 'off'
     }
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
     const compactMappings = credentials?.compact_model_mapping as Record<string, string> | undefined
@@ -5477,11 +5503,16 @@ const handleSubmit = async () => {
 
       // 指纹收敛模式：默认 off（不写入）；device/session/full 是显式 opt-in，
       // 必须落键，否则管理员的选择会被后端当作"未设置"而回落到 off（#5610）。
-      if (props.account.type === 'oauth') {
+      if (props.account.type === 'oauth' || props.account.type === 'apikey') {
         if (codexFingerprintMode.value !== 'off') {
           newExtra.codex_fingerprint_mode = codexFingerprintMode.value
         } else {
           delete newExtra.codex_fingerprint_mode
+        }
+        if (nonCodexTrafficPolicy.value === 'pi') {
+          newExtra.non_codex_traffic_policy = 'pi'
+        } else {
+          delete newExtra.non_codex_traffic_policy
         }
       }
 

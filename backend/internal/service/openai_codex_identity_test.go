@@ -416,3 +416,9 @@ func TestCodexCanonicalUserAgentFallsBackWithoutResolver(t *testing.T) {
 	)
 	require.Equal(t, codexCLIVersion, CodexCanonicalClientVersion())
 }
+
+func TestResolveCodexOutboundUserAgentDecisionAllowsMissingAccount(t *testing.T) {
+	decision := (&OpenAIGatewayService{}).resolveCodexOutboundUserAgentDecision(nil, " inbound/1.0 ", "")
+	require.Equal(t, "inbound/1.0", decision.userAgent)
+	require.Empty(t, decision.identityOverride)
+}

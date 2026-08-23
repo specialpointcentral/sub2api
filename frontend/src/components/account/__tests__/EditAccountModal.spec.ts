@@ -388,6 +388,35 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('shows and submits Codex fingerprint convergence for an OpenAI API key account', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="edit-codex-fingerprint-mode-select"]').setValue('device')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_fingerprint_mode).toBe('device')
+  })
+
+  it('loads and disables account-scoped non-Codex pi normalization', async () => {
+    const account = buildAccount()
+    account.extra = { non_codex_traffic_policy: 'pi' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+
+    const policySelect = wrapper.get('[data-testid="edit-non-codex-traffic-policy-select"]')
+    expect((policySelect.element as HTMLSelectElement).value).toBe('pi')
+    await policySelect.setValue('off')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('non_codex_traffic_policy')
+  })
+
   it('preserves adaptive GLM endpoints on submit', async () => {
     const account = buildAccount()
     account.platform = 'zhipu'
