@@ -476,6 +476,10 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
 	updates[SettingKeyOpenAICodexClientVersion] = NormalizeCodexClientVersion(settings.OpenAICodexClientVersion)
 	updates[SettingKeyOpenAICodexVersionAutoSyncEnabled] = strconv.FormatBool(settings.OpenAICodexVersionAutoSyncEnabled)
+	updates[SettingKeyOpenAICodexDevicePoolSize] = strconv.Itoa(settings.OpenAICodexDevicePoolSize)
+	updates[SettingKeyOpenAICodexDevicePoolPlatformRatio] = settings.OpenAICodexDevicePoolPlatformRatio
+	updates[SettingKeyOpenAICodexUAPersonaEnabled] = strconv.FormatBool(settings.OpenAICodexUAPersonaEnabled)
+	updates[SettingKeyOpenAICodexVersionStaggerMaxHours] = strconv.Itoa(settings.OpenAICodexVersionStaggerMaxHours)
 	// SettingKeyOpenAICodexClientVersionSynced 由自动同步任务独占写入，此处不得覆盖，
 	// 否则面板保存会把同步结果清空。
 	// codex_cli_only 加固
@@ -735,6 +739,22 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// 版本号缓存只做失效，不在此重算：生效值还取决于自动同步写入的 synced 键，
 	// 这里没有它的最新值，重算会把同步结果覆盖成陈旧值。
 	s.InvalidateOpenAICodexClientVersionCache()
+	s.openAICodexDevicePoolSF.Forget(SettingKeyOpenAICodexDevicePoolSize)
+	s.openAICodexDevicePoolCache.Store(&cachedOpenAICodexDevicePoolSize{
+		value: normalizeOpenAICodexDevicePoolSize(settings.OpenAICodexDevicePoolSize), expiresAt: time.Now().Add(openAICodexDevicePoolCacheTTL).UnixNano(),
+	})
+	s.openAICodexDevicePoolSF.Forget(SettingKeyOpenAICodexDevicePoolPlatformRatio)
+	ratio, ok := parseCodexDevicePlatformRatio(settings.OpenAICodexDevicePoolPlatformRatio)
+	if !ok {
+		ratio, _ = parseCodexDevicePlatformRatio(defaultOpenAICodexDevicePoolPlatformRatio)
+	}
+	s.openAICodexDeviceRatioCache.Store(&cachedOpenAICodexDevicePlatformRatio{
+		value: ratio, expiresAt: time.Now().Add(openAICodexDevicePoolCacheTTL).UnixNano(),
+	})
+	s.openAICodexUAPersonaSF.Forget(SettingKeyOpenAICodexUAPersonaEnabled)
+	s.openAICodexUAPersonaCache.Store(&cachedOpenAICodexUAPersonaEnabled{
+		value: settings.OpenAICodexUAPersonaEnabled, expiresAt: time.Now().Add(openAICodexUAPersonaCacheTTL).UnixNano(),
+	})
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		lowUpstreamRatePriorityEnabled: settings.OpenAILowUpstreamRatePriorityEnabled,

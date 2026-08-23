@@ -180,14 +180,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		reqStream = gjson.GetBytes(body, "stream").Bool()
 
-		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
-		if scopeErr != nil {
-			return nil, scopeErr
-		}
-		if accountScoped {
-			body = accountScopedBody
-		}
-
 		stageCodexFingerprintIDs(c, nil)
 		// 指纹收敛：与非透传路径同门控（仅 OAuth、legacy compact 形态跳过）。
 		// 一次性解析收敛 ID：请求体 client_metadata 在此改写（raw 字节外科
@@ -198,7 +190,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			if c != nil && c.Request != nil {
 				clientHeaders = c.Request.Header
 			}
-			fpIDs := s.resolveCodexFingerprintIDsForOutbound(account, clientHeaders, true)
+			clientHeaders = withCodexFingerprintSessionHint(clientHeaders, codexFingerprintSessionHintRaw(body))
+			fpIDs, fpResolveErr := s.resolveCodexFingerprintIDsForOutbound(c, account, clientHeaders, true)
+			if fpResolveErr != nil {
+				return nil, fmt.Errorf("resolve outbound codex fingerprint: %w", fpResolveErr)
+			}
 			if fpIDs != nil {
 				fpBody, fpChanged, fpErr := applyCodexFingerprintClientMetadataRaw(body, fpIDs)
 				if fpErr != nil {
@@ -699,8 +695,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
 		req.Header.Set("user-agent", CodexCanonicalUserAgent())
 	}
-	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
-
 	// 指纹收敛：使用 forwardOpenAIPassthrough 中预计算的收敛 ID 改写出站头，
 	// 与请求体 client_metadata 共享同一份 IDs（与非透传路径相同的相对位置：
 	// 会话隔离之后、终态身份收口之前）。
@@ -708,7 +702,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// 终态收口：透传路径的 OAuth 与非透传完全一致，同样强制统一出站身份
 	// （User-Agent / originator / version 同源自洽），客户端自报身份不会到达上游。
 	if account.UsesOpenAICodexProtocol() {
-		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUAForRequest(c, account))
 	}
 
 	if req.Header.Get("content-type") == "" {

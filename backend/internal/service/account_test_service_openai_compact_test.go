@@ -267,7 +267,7 @@ func TestAccountTestService_TestAccountConnection_OpenAICompact2xxWithoutItemMar
 
 // 探测与真实转发走同一 /responses 端点，出站身份必须与真实 Codex 同构：
 // session/thread 为 UUID、携带 x-codex-installation-id（收敛账号用收敛值）。
-func TestAccountTestService_TestAccountConnection_OpenAICompactProbeIdentityMatchesRealTraffic(t *testing.T) {
+func TestAccountTestService_TestAccountConnection_OpenAICompactProbePoolOneIdentityMatchesRealTraffic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	updateCalls := make(chan map[string]any, 1)
@@ -306,10 +306,12 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactProbeIdentityMatc
 
 	require.NoError(t, svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact))
 
-	// 显式 session 收敛模式：出站身份 = 账号级收敛值
+	// 此断言只覆盖 pool=1：退化设备使用账号 seed 派生的稳定长 session，与同账号
+	// 真实流量一致。pool>1 时管理探测仍走 slot 0，而真实用户流量会绑定持久 slot >0，
+	// 两条身份不保证相同。
 	seed, ok := codexFingerprintSeed(account.Extra)
 	require.True(t, ok)
-	converged := resolveConvergedSessionID(seed)
+	converged := resolveStableCodexDeviceSessionID(seed)
 	require.Equal(t, converged, upstream.lastReq.Header.Get("session-id"))
 	require.Equal(t, converged, upstream.lastReq.Header.Get("session_id"))
 	require.Equal(t, resolveConvergedInstallationID(&account, seed), upstream.lastReq.Header.Get("x-codex-installation-id"),
