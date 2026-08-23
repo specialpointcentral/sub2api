@@ -81,7 +81,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		})
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
 	}
-
 	if account.Platform == PlatformGrok {
 		if account.IsGrokOAuth() {
 			if eligible, reason := grokChatResponsesBridgeEligibility(body); eligible {
@@ -318,6 +317,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	responsesBody, err = s.applyOpenAINonCodexPiHTTPProjection(c, account, responsesBody)
+	if err != nil {
+		return nil, fmt.Errorf("apply pi-normalize HTTP projection: %w", err)
+	}
 
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
