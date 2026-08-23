@@ -104,6 +104,21 @@ func TestBuildOpenAIModelsURL(t *testing.T) {
 	}
 }
 
+func TestBuildOpenAIUpstreamModelsRequestUsesCanonicalIdentityAndProfile(t *testing.T) {
+	svc := &AccountTestService{cfg: upstreamModelSyncTestConfig()}
+	req, err := svc.buildOpenAIUpstreamModelsRequest(context.Background(), &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "openai-key",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://api.openai.com/v1/models", req.URL.String())
+	require.Equal(t, CodexCanonicalUserAgent(), req.Header.Get("User-Agent"))
+	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+}
+
 func TestBuildGeminiModelsURL(t *testing.T) {
 	t.Parallel()
 
