@@ -236,6 +236,7 @@ func ProvideAccountUsageService(
 	concurrencyService *ConcurrencyService,
 	userRepo UserRepository,
 	kiroCooldownStore KiroCooldownStore,
+	settingService *SettingService,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -254,6 +255,7 @@ func ProvideAccountUsageService(
 	service.SetConcurrencyService(concurrencyService)
 	service.SetUserRepository(userRepo)
 	service.SetKiroCooldownStore(kiroCooldownStore)
+	service.SetSettingService(settingService)
 	return service
 }
 
@@ -860,6 +862,7 @@ func ProvideOpenAIGatewayService(
 	balanceNotifyService *BalanceNotifyService,
 	settingService *SettingService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	openAIAccountRuntimeCache OpenAIAccountRuntimeCache,
 ) *OpenAIGatewayService {
 	service := NewOpenAIGatewayService(
 		accountRepo,
@@ -886,6 +889,7 @@ func ProvideOpenAIGatewayService(
 		userPlatformQuotaRepo,
 	)
 	service.tlsFPProfileService = tlsFPProfileService
+	service.SetOpenAIAccountRuntimeCache(openAIAccountRuntimeCache)
 	return service
 }
 
