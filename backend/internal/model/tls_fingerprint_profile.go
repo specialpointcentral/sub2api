@@ -34,14 +34,14 @@ func (p *TLSFingerprintProfile) Validate() error {
 		return &ValidationError{Field: "name", Message: "name is required"}
 	}
 	for _, proto := range p.ALPNProtocols {
-		// Fail closed on HTTP/2 ALPN: the custom-profile upstream transport is
-		// HTTP/1.1-only today. A uTLS conn that negotiates "h2" cannot be handed
-		// to net/http's H2 stack (it fails the *tls.Conn type assertion), so
-		// advertising h2 would break every request at runtime. Reject at the
-		// validation layer instead of silently stripping, so a misconfigured
-		// profile surfaces as a clear error rather than a surprising downgrade.
-		if strings.EqualFold(proto, "h2") || strings.EqualFold(proto, "h2c") {
-			return &ValidationError{Field: "alpn_protocols", Message: "'" + proto + "' is not supported: custom profiles currently speak HTTP/1.1 only"}
+		// Fail closed on cleartext HTTP/2: the custom-profile upstream transport
+		// only runs over TLS, so "h2c" can never be negotiated and would break
+		// every request at runtime. Reject at the validation layer instead of
+		// silently stripping, so a misconfigured profile surfaces as a clear
+		// error rather than a surprising downgrade. "h2" is supported via
+		// TLSRoundTripper's ALPN sniffing (see tlsfingerprint package).
+		if strings.EqualFold(proto, "h2c") {
+			return &ValidationError{Field: "alpn_protocols", Message: "'h2c' is not supported: custom profiles only speak HTTP over TLS (\"h2\" or \"http/1.1\")"}
 		}
 	}
 	return nil
