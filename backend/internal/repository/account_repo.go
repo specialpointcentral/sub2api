@@ -111,6 +111,7 @@ const postgresParameterBatchSize = 50000
 
 const codexFingerprintSeedCanonicalPattern = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 const codexFingerprintNilSeed = "00000000-0000-0000-0000-000000000000"
+const codexFingerprintAccountEligibilitySQL = "platform = 'openai' AND type IN ('oauth', 'apikey')"
 
 func codexFingerprintSeedValidSQL(extraExpr string) string {
 	value := "(" + extraExpr + " ->> 'codex_fingerprint_seed')"
@@ -132,7 +133,7 @@ func codexFingerprintSeedCandidateLiteral(candidate string) string {
 }
 
 func ensureCodexFingerprintSeedSQL(extraExpr, fallbackSeedLiteral string) string {
-	return "CASE WHEN platform = 'openai' AND type = 'oauth' THEN " +
+	return "CASE WHEN " + codexFingerprintAccountEligibilitySQL + " THEN " +
 		"jsonb_set(" + extraExpr + ", '{codex_fingerprint_seed}', " +
 		"CASE WHEN " + codexFingerprintSeedValidSQL("extra") +
 		" THEN to_jsonb(extra ->> 'codex_fingerprint_seed') " +
@@ -2793,8 +2794,11 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 }
 
 // EnsureCodexFingerprintSeed atomically preserves a valid account seed or creates
-// one for an OpenAI OAuth account. Concurrent first requests serialize on the row
-// and all callers read the same winning seed.
+// one for an eligible OpenAI OAuth/API Key account. Seedless rows derive the seed
+// deterministically from the row's upstream identity (duplicate rows on the same
+// ChatGPT account / upstream key converge); rows without a recognizable upstream
+// identity fall back to a random seed. Concurrent first requests serialize on the
+// row and all callers read the same winning seed.
 func (r *accountRepository) EnsureCodexFingerprintSeed(ctx context.Context, id int64) (string, error) {
 	baseCtx := ctx
 	contextTx := dbent.TxFromContext(ctx)
@@ -2822,7 +2826,7 @@ func (r *accountRepository) EnsureCodexFingerprintSeed(ctx context.Context, id i
 	extraExpression := ensureCodexFingerprintSeedSQL("COALESCE(extra, '{}'::jsonb)", codexFingerprintSeedCandidateLiteral(candidate))
 	rows, err := exec.QueryContext(ctx,
 		"UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW() "+
-			"WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai' AND type = 'oauth' AND NOT COALESCE("+codexFingerprintSeedValidSQL("extra")+", false) "+
+			"WHERE id = $1 AND deleted_at IS NULL AND "+codexFingerprintAccountEligibilitySQL+" AND NOT COALESCE("+codexFingerprintSeedValidSQL("extra")+", false) "+
 			"RETURNING extra ->> 'codex_fingerprint_seed'",
 		id,
 	)
@@ -2836,7 +2840,7 @@ func (r *accountRepository) EnsureCodexFingerprintSeed(ctx context.Context, id i
 	if !updated {
 		rows, err = exec.QueryContext(ctx,
 			"SELECT extra ->> 'codex_fingerprint_seed' FROM accounts "+
-				"WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai' AND type = 'oauth' AND COALESCE("+codexFingerprintSeedValidSQL("extra")+", false)",
+				"WHERE id = $1 AND deleted_at IS NULL AND "+codexFingerprintAccountEligibilitySQL+" AND COALESCE("+codexFingerprintSeedValidSQL("extra")+", false)",
 			id,
 		)
 		if err != nil {

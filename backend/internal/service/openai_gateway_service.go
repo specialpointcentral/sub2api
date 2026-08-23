@@ -227,7 +227,7 @@ func (s *OpenAIGatewayService) ensureCodexDevicePoolSlot(ctx context.Context, ac
 }
 
 func (s *OpenAIGatewayService) withEnsuredCodexFingerprintSeed(ctx context.Context, account *Account) (*Account, error) {
-	if account == nil || !account.IsOpenAIOAuth() {
+	if !isOpenAICodexFingerprintAccount(account) {
 		return account, nil
 	}
 	if _, ok := codexFingerprintSeed(account.Extra); ok {
@@ -265,7 +265,15 @@ func (s *OpenAIGatewayService) withEnsuredCodexFingerprintSeed(ctx context.Conte
 // 才按账号 seed 加权回退。
 func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(c *gin.Context, account *Account, clientHeaders http.Header, enforceIdentity bool) (*codexFingerprintIDs, error) {
 	account = codexAccountIdentitySource(c, account)
-	if account == nil || !account.IsOpenAIOAuth() {
+	if account == nil || (!account.IsOpenAIOAuth() && !account.IsOpenAIApiKey()) {
+		return nil, nil
+	}
+	mode := account.GetCodexFingerprintMode()
+	// API-key off never opts in to fingerprint convergence. A seed may remain
+	// after disabling convergence, but its mere presence must not reactivate
+	// any fingerprint header/body rewrite. Endpoint-specific session compatibility
+	// that predates API-key convergence remains outside this gate.
+	if account.IsOpenAIApiKey() && mode == codexFingerprintOff {
 		return nil, nil
 	}
 	requestCtx := context.Background()
@@ -283,17 +291,14 @@ func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(c *gin.Cont
 		}
 	}
 
-	userAgent := ""
+	inboundUserAgent := ""
 	if clientHeaders != nil {
-		userAgent = strings.TrimSpace(clientHeaders.Get("user-agent"))
+		inboundUserAgent = strings.TrimSpace(clientHeaders.Get("user-agent"))
 	}
 	customUA := strings.TrimSpace(account.GetOpenAIUserAgent())
-	if customUA != "" {
-		userAgent = customUA
-	}
 	forceCodexCLI := s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI
 	personaEligible := personaEnabled && customUA == "" && !forceCodexCLI && account != nil && account.IsOpenAIOAuth()
-	needsFingerprintSeed := codexFingerprintModeRequiresSeed(account.GetCodexFingerprintMode()) ||
+	needsFingerprintSeed := codexFingerprintModeRequiresSeed(mode) ||
 		personaEligible || extractClientSessionID(clientHeaders) != ""
 	if !needsFingerprintSeed {
 		return nil, nil
@@ -309,7 +314,7 @@ func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(c *gin.Cont
 	deviceSlot := 0
 	poolSelection := codexUAPersonaSelection{}
 	poolRootSession := ""
-	mode := resolvedAccount.GetCodexFingerprintMode()
+	mode = resolvedAccount.GetCodexFingerprintMode()
 	if poolSize >= 3 && (mode != codexFingerprintOff || personaEnabled) {
 		poolSelection, _ = observedCodexUAPersonaSelection(clientHeaders)
 		if poolSelection.Platform == "" {
@@ -330,13 +335,10 @@ func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(c *gin.Cont
 		return nil, nil
 	}
 
-	if forceCodexCLI {
-		userAgent = CodexCanonicalUserAgent()
-	} else if personaEligible {
+	if personaEligible {
 		if deviceSlot > 0 {
 			ids.userAgent = buildCodexPersonaUserAgent(poolSelection.Platform, CodexCanonicalClientVersion())
 			ids.sandbox = poolSelection.Sandbox
-			userAgent = ids.userAgent
 		} else {
 			selection, frozen := canonicalCodexUAPersonaSelection(resolvedAccount.Extra[codexUAPersonaExtraKey])
 			if !frozen {
@@ -362,21 +364,18 @@ func (s *OpenAIGatewayService) resolveCodexFingerprintIDsForOutbound(c *gin.Cont
 			if frozen {
 				ids.userAgent = buildCodexPersonaUserAgent(selection.Platform, CodexCanonicalClientVersion())
 				ids.sandbox = selection.Sandbox
-				userAgent = ids.userAgent
 			}
 		}
 	}
+	uaDecision := s.resolveCodexOutboundUserAgentDecision(resolvedAccount, inboundUserAgent, ids.userAgent)
+	userAgent := uaDecision.userAgent
 	if enforceIdentity {
 		headers := make(http.Header)
 		headers.Set("originator", openai.CodexDefaultOriginator)
 		if userAgent != "" {
 			headers.Set("user-agent", userAgent)
 		}
-		identityOverride := s.codexIdentityOverrideUA(account)
-		if identityOverride == "" && ids.userAgent != "" {
-			identityOverride = ids.userAgent
-		}
-		enforceCodexIdentityHeadersWithUA(headers, identityOverride)
+		enforceCodexIdentityHeadersWithUA(headers, uaDecision.identityOverride)
 		userAgent = headers.Get("user-agent")
 	}
 	if ids.sandbox == "" {
