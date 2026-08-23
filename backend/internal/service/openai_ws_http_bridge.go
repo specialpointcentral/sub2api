@@ -417,6 +417,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
+		if paceErr := s.waitForOpenAIAccountStart(ctx, account); paceErr != nil {
+			return nil, paceErr
+		}
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		if err != nil {
 			if turn == 1 {

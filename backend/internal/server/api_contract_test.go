@@ -958,6 +958,12 @@ func TestAPIContracts(t *testing.T) {
 					"openai_codex_ua_persona_enabled": false,
 					"openai_codex_version_auto_sync_enabled": true,
 					"openai_codex_version_stagger_max_hours": 0,
+					"openai_request_pacing_enabled": false,
+					"openai_request_pacing_min_interval_ms": 250,
+					"openai_request_pacing_max_interval_ms": 750,
+					"openai_account_thread_concurrency_limit": 0,
+					"openai_quota_probe_interval_minutes": 10,
+					"openai_quota_probe_jitter_ratio": 0.25,
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
@@ -1277,6 +1283,12 @@ func TestAPIContracts(t *testing.T) {
 					"openai_codex_ua_persona_enabled": false,
 					"openai_codex_version_auto_sync_enabled": true,
 					"openai_codex_version_stagger_max_hours": 0,
+					"openai_request_pacing_enabled": false,
+					"openai_request_pacing_min_interval_ms": 250,
+					"openai_request_pacing_max_interval_ms": 750,
+					"openai_account_thread_concurrency_limit": 0,
+					"openai_quota_probe_interval_minutes": 10,
+					"openai_quota_probe_jitter_ratio": 0.25,
 					"openai_fast_policy_settings": {
 						"rules": []
 					},

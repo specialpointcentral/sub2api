@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,232 @@ func (r *oauth429RateLimitRepo) SetRateLimited(_ context.Context, _ int64, until
 }
 
 func TestOpenAI429FastPath_KeepsOAuthAccountSchedulableDuringRetryWindow(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	apiKeyAccount := &Account{ID: 43, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	setupTokenAccount := &Account{ID: 44, Platform: PlatformOpenAI, Type: AccountTypeSetupToken}
+	grokOAuthAccount := &Account{ID: 45, Platform: PlatformGrok, Type: AccountTypeOAuth}
+
+	shouldDisable := svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, nil)
+	apiKeyShouldDisable := svc.handleOpenAIAccountUpstreamError(context.Background(), apiKeyAccount, http.StatusTooManyRequests, http.Header{}, nil)
+
+	require.False(t, shouldDisable)
+	require.False(t, apiKeyShouldDisable)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(apiKeyAccount), "API-key 429 keeps the existing scheduler cooldown behavior")
+	require.Equal(t, 1, repo.setRateLimitedCalls, "only the API-key 429 should persist a scheduler block")
+	require.True(t, svc.shouldRetryOpenAIOAuth429OnSameAccount(account, http.StatusTooManyRequests, false))
+	require.True(t, svc.shouldRetryOpenAIOAuth429OnSameAccount(setupTokenAccount, http.StatusTooManyRequests, false))
+	require.False(t, svc.shouldRetryOpenAIOAuth429OnSameAccount(apiKeyAccount, http.StatusTooManyRequests, false))
+	require.False(t, svc.shouldRetryOpenAIOAuth429OnSameAccount(grokOAuthAccount, http.StatusTooManyRequests, false))
+	require.WithinDuration(t, time.Now().Add(openAIOAuth429RetryWindow), svc.openAIOAuth429RetryDeadline(account), time.Second)
+	require.WithinDuration(t, time.Now().Add(openAIOAuth429RetryWindow), svc.openAIOAuth429RetryDeadline(setupTokenAccount), time.Second)
+}
+
+type sharedOpenAIAccountRuntimeCache struct {
+	mu         sync.Mutex
+	blocks     map[int64]time.Time
+	stormCount int64
+	getCalls   int
+	batchCalls int
+	err        error
+}
+
+func newSharedOpenAIAccountRuntimeCache() *sharedOpenAIAccountRuntimeCache {
+	return &sharedOpenAIAccountRuntimeCache{blocks: make(map[int64]time.Time)}
+}
+
+func (c *sharedOpenAIAccountRuntimeCache) SetOpenAIAccountRuntimeBlock(_ context.Context, accountID int64, until time.Time) (time.Time, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return time.Time{}, c.err
+	}
+	if current := c.blocks[accountID]; current.After(until) {
+		return current, nil
+	}
+	c.blocks[accountID] = until
+	return until, nil
+}
+
+func (c *sharedOpenAIAccountRuntimeCache) GetOpenAIAccountRuntimeBlock(_ context.Context, accountID int64) (time.Time, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.getCalls++
+	if c.err != nil {
+		return time.Time{}, c.err
+	}
+	return c.blocks[accountID], nil
+}
+
+func (c *sharedOpenAIAccountRuntimeCache) runtimeBlockGetCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.getCalls
+}
+
+func (c *sharedOpenAIAccountRuntimeCache) GetOpenAIAccountRuntimeBlocks(_ context.Context, accountIDs []int64) (map[int64]time.Time, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.batchCalls++
+	if c.err != nil {
+		return nil, c.err
+	}
+	result := make(map[int64]time.Time, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if until := c.blocks[accountID]; !until.IsZero() {
+			result[accountID] = until
+		}
+	}
+	return result, nil
+}
+
+func (c *sharedOpenAIAccountRuntimeCache) runtimeBlockBatchCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.batchCalls
+}
+
+func (c *sharedOpenAIAccountRuntimeCache) ClearOpenAIAccountRuntimeBlock(_ context.Context, accountID int64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	delete(c.blocks, accountID)
+	return nil
+}
+
+func (c *sharedOpenAIAccountRuntimeCache) IncrementOpenAIOAuth429Storm(context.Context, time.Duration) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return 0, c.err
+	}
+	c.stormCount++
+	return c.stormCount, nil
+}
+
+func (c *sharedOpenAIAccountRuntimeCache) GetOpenAIOAuth429StormCount(context.Context) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return 0, c.err
+	}
+	return c.stormCount, nil
+}
+
+func TestOpenAIRuntimeBlock_IsVisibleAcrossInstances(t *testing.T) {
+	cache := newSharedOpenAIAccountRuntimeCache()
+	instanceA := &OpenAIGatewayService{}
+	instanceB := &OpenAIGatewayService{}
+	instanceA.SetOpenAIAccountRuntimeCache(cache)
+	instanceB.SetOpenAIAccountRuntimeCache(cache)
+	account := &Account{ID: 9401, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	instanceA.BlockAccountScheduling(account, time.Now().Add(time.Minute), "429")
+
+	require.True(t, instanceB.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIOAuth429Storm_IsVisibleAcrossInstances(t *testing.T) {
+	cache := newSharedOpenAIAccountRuntimeCache()
+	instanceA := &OpenAIGatewayService{}
+	instanceB := &OpenAIGatewayService{}
+	instanceA.SetOpenAIAccountRuntimeCache(cache)
+	instanceB.SetOpenAIAccountRuntimeCache(cache)
+
+	for range 5 {
+		instanceA.recordOpenAIOAuth429()
+		instanceB.recordOpenAIOAuth429()
+	}
+
+	count, err := cache.GetOpenAIOAuth429StormCount(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(10), count, "storm increments from both instances must land in the shared counter")
+}
+
+func TestOpenAIAccountRuntimeCacheFailureFallsBackToMemory(t *testing.T) {
+	cache := newSharedOpenAIAccountRuntimeCache()
+	cache.err = errors.New("redis unavailable")
+	svc := &OpenAIGatewayService{}
+	svc.SetOpenAIAccountRuntimeCache(cache)
+	account := &Account{ID: 9402, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	svc.BlockAccountScheduling(account, time.Now().Add(time.Minute), "429")
+	svc.recordOpenAIOAuth429()
+	svc.recordOpenAIOAuth429()
+
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, int64(2), svc.openaiOAuth429WindowCount.Load(), "shared cache failure must fall back to the process-local storm counter")
+}
+
+func TestOpenAIRuntimeBlock_EmptySharedReadPreservesUnexpiredLocalBlock(t *testing.T) {
+	cache := newSharedOpenAIAccountRuntimeCache()
+	svc := &OpenAIGatewayService{}
+	svc.SetOpenAIAccountRuntimeCache(cache)
+	account := &Account{ID: 9403, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	localUntil := time.Now().Add(time.Minute)
+	svc.openaiAccountRuntimeBlockUntil.Store(account.ID, localUntil)
+
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Zero(t, cache.runtimeBlockGetCalls(), "an authoritative local block must not wait on Redis")
+	stored, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, ok)
+	storedUntil, ok := stored.(time.Time)
+	require.True(t, ok)
+	require.WithinDuration(t, localUntil, storedUntil, time.Millisecond)
+}
+
+func TestOpenAIRuntimeBlock_PrefetchesCandidatesWithOneBatchRead(t *testing.T) {
+	cache := newSharedOpenAIAccountRuntimeCache()
+	cache.blocks[9501] = time.Now().Add(time.Minute)
+	cache.blocks[9503] = time.Now().Add(2 * time.Minute)
+	svc := &OpenAIGatewayService{}
+	svc.SetOpenAIAccountRuntimeCache(cache)
+	accounts := []Account{
+		{ID: 9501, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		{ID: 9502, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		{ID: 9503, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+	}
+
+	svc.prefetchOpenAIAccountRuntimeBlocks(accounts)
+
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(&accounts[0]))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(&accounts[1]))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(&accounts[2]))
+	require.Equal(t, 1, cache.runtimeBlockBatchCalls())
+	require.Zero(t, cache.runtimeBlockGetCalls())
+}
+
+func TestOpenAIRuntimeBlock_CachesSharedReadsOnSchedulingHotPath(t *testing.T) {
+	cache := newSharedOpenAIAccountRuntimeCache()
+	account := &Account{ID: 9404, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	cache.blocks[account.ID] = time.Now().Add(time.Minute)
+	svc := &OpenAIGatewayService{}
+	svc.SetOpenAIAccountRuntimeCache(cache)
+
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, 1, cache.runtimeBlockGetCalls(), "repeated scheduler checks within the short TTL should share one Redis GET")
+}
+
+func TestOpenAIRuntimeBlock_BacksOffSharedReadsAfterRedisError(t *testing.T) {
+	cache := newSharedOpenAIAccountRuntimeCache()
+	cache.err = errors.New("redis unavailable")
+	svc := &OpenAIGatewayService{}
+	svc.SetOpenAIAccountRuntimeCache(cache)
+	account := &Account{ID: 9405, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, 1, cache.runtimeBlockGetCalls(), "Redis failure should suppress immediate hot-path retries")
+}
+
+func TestOpenAI429FastPath_MarksOAuthAccountCoolingDown(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
