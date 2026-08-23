@@ -5687,6 +5687,15 @@
                 </p>
               </div>
 
+              <div class="border-t border-gray-100 pt-5 dark:border-dark-700">
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                  {{ t("admin.settings.gatewayForwarding.codexRectifierTitle") }}
+                </h3>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.codexRectifierDescription") }}
+                </p>
+              </div>
+
               <!-- OpenAI Codex UA -->
               <div>
                 <label
@@ -5774,6 +5783,79 @@
                   </p>
                 </div>
                 <Toggle v-model="form.openai_codex_version_auto_sync_enabled" />
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.gatewayForwarding.codexDevicePoolSize") }}
+                </label>
+                <select
+                  v-model.number="form.openai_codex_device_pool_size"
+                  data-testid="codex-device-pool-size"
+                  class="input w-full"
+                >
+                  <option v-for="size in [1, 3, 4, 5, 6, 7, 8]" :key="size" :value="size">
+                    {{ size }}
+                  </option>
+                </select>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.codexDevicePoolSizeHint") }}
+                </p>
+                <p
+                  v-if="Number(form.openai_codex_device_pool_size) >= 3"
+                  data-testid="codex-device-pool-migration-warning"
+                  class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300"
+                >
+                  {{ t("admin.settings.gatewayForwarding.codexDevicePoolMigrationWarning") }}
+                </p>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.gatewayForwarding.codexDevicePoolPlatformRatio") }}
+                </label>
+                <input
+                  v-model.trim="form.openai_codex_device_pool_platform_ratio"
+                  data-testid="codex-device-pool-platform-ratio"
+                  type="text"
+                  placeholder="1:1:2"
+                  class="input w-full"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.codexDevicePoolPlatformRatioHint") }}
+                </p>
+              </div>
+
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.codexUAPersona") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.codexUAPersonaHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.openai_codex_ua_persona_enabled"
+                  data-testid="codex-ua-persona-enabled"
+                />
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t("admin.settings.gatewayForwarding.codexVersionStaggerMaxHours") }}
+                </label>
+                <input
+                  v-model.number="form.openai_codex_version_stagger_max_hours"
+                  data-testid="codex-version-stagger-max-hours"
+                  type="number"
+                  min="0"
+                  max="48"
+                  class="input w-full"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.codexVersionStaggerMaxHoursHint") }}
+                </p>
               </div>
 
             </div>
@@ -9103,6 +9185,8 @@ const openaiFastPolicyLoaded = ref(false);
 const tablePageSizeMin = 5;
 const tablePageSizeMax = 1000;
 const tablePageSizeDefault = 20;
+// Keep this boundary aligned with the backend ratio parser/handler contract.
+const codexDevicePoolPlatformRatioWeightMax = 1_000_000;
 
 function defaultLoginAgreementDocuments(): LoginAgreementDocument[] {
   return [
@@ -9832,6 +9916,10 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
+  openai_codex_device_pool_size: 1,
+  openai_codex_device_pool_platform_ratio: "1:1:2",
+  openai_codex_ua_persona_enabled: false,
+  openai_codex_version_stagger_max_hours: 0,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -11082,6 +11170,40 @@ function findDuplicateDefaultSubscription(
 async function saveSettings() {
   saving.value = true;
   try {
+    const codexDevicePoolSize = Number(form.openai_codex_device_pool_size);
+    if (
+      !Number.isInteger(codexDevicePoolSize) ||
+      (codexDevicePoolSize !== 1 &&
+        (codexDevicePoolSize < 3 || codexDevicePoolSize > 8))
+    ) {
+      appStore.showError(
+        t("admin.settings.gatewayForwarding.codexDevicePoolSizeError"),
+      );
+      return;
+    }
+    const codexDevicePoolPlatformRatio = String(
+      form.openai_codex_device_pool_platform_ratio,
+    )
+      .split(":")
+      .map((part) => Number(part.trim()));
+    if (
+      codexDevicePoolPlatformRatio.length !== 3 ||
+      codexDevicePoolPlatformRatio.some(
+        (weight) =>
+          !Number.isInteger(weight) ||
+          weight <= 0 ||
+          weight > codexDevicePoolPlatformRatioWeightMax,
+      )
+    ) {
+      appStore.showError(
+        t("admin.settings.gatewayForwarding.codexDevicePoolPlatformRatioError"),
+      );
+      return;
+    }
+    form.openai_codex_device_pool_size = codexDevicePoolSize;
+    form.openai_codex_device_pool_platform_ratio =
+      codexDevicePoolPlatformRatio.join(":");
+
     const normalizedTableDefaultPageSize = Math.floor(
       Number(form.table_default_page_size),
     );
@@ -11435,6 +11557,13 @@ async function saveSettings() {
         form.openai_codex_client_version?.trim() || "",
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
+      openai_codex_device_pool_size: Number(form.openai_codex_device_pool_size),
+      openai_codex_device_pool_platform_ratio:
+        form.openai_codex_device_pool_platform_ratio,
+      openai_codex_ua_persona_enabled: form.openai_codex_ua_persona_enabled,
+      openai_codex_version_stagger_max_hours: Number(
+        form.openai_codex_version_stagger_max_hours,
+      ),
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:

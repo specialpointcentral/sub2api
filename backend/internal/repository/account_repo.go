@@ -28,6 +28,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -116,12 +117,119 @@ func codexFingerprintSeedValidSQL(extraExpr string) string {
 	return "(" + value + " ~ '" + codexFingerprintSeedCanonicalPattern + "' AND " + value + " <> '" + codexFingerprintNilSeed + "')"
 }
 
-func ensureCodexFingerprintSeedSQL(extraExpr string) string {
+// codexFingerprintSeedCandidateLiteral renders a validated deterministic candidate
+// seed as a SQL text literal, or NULL when no candidate exists (the ensure SQL then
+// falls back to gen_random_uuid()). The candidate always comes from
+// service.DeriveCodexFingerprintSeed on the caller side; embedding it as a literal
+// keeps every ensure path atomic without reshaping query argument lists.
+func codexFingerprintSeedCandidateLiteral(candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	parsed, err := uuid.Parse(candidate)
+	if err != nil || parsed == uuid.Nil || parsed.String() != candidate {
+		return "NULL"
+	}
+	return "'" + parsed.String() + "'::text"
+}
+
+func ensureCodexFingerprintSeedSQL(extraExpr, fallbackSeedLiteral string) string {
 	return "CASE WHEN platform = 'openai' AND type = 'oauth' THEN " +
 		"jsonb_set(" + extraExpr + ", '{codex_fingerprint_seed}', " +
 		"CASE WHEN " + codexFingerprintSeedValidSQL("extra") +
-		" THEN to_jsonb(extra ->> 'codex_fingerprint_seed') ELSE to_jsonb(gen_random_uuid()::text) END, true) " +
+		" THEN to_jsonb(extra ->> 'codex_fingerprint_seed') " +
+		"ELSE to_jsonb(COALESCE(" + fallbackSeedLiteral + ", gen_random_uuid()::text)) END, true) " +
 		"ELSE " + extraExpr + " END"
+}
+
+// bulkCodexFingerprintSeedFallbackSQL locks and reads every target identity through
+// the same transaction executor that performs BulkUpdate, then builds a per-row CASE
+// mapping. Keeping the read and write in one transaction prevents a concurrent
+// credential rotation from installing a seed derived from a stale identity.
+func bulkCodexFingerprintSeedFallbackSQL(ctx context.Context, exec sqlExecutor, ids []int64, credentialOverrides map[string]any) (string, error) {
+	rows, err := exec.QueryContext(ctx,
+		"SELECT id, platform, type, COALESCE(credentials::text, '{}') FROM accounts "+
+			"WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY id FOR UPDATE",
+		pq.Array(ids),
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "NULL", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var builder strings.Builder
+	derived := 0
+	for rows.Next() {
+		var id int64
+		var platform, accountType, credentialsRaw string
+		if err := rows.Scan(&id, &platform, &accountType, &credentialsRaw); err != nil {
+			return "", err
+		}
+		candidate, err := deriveCodexFingerprintSeedCandidateFromIdentity(platform, accountType, credentialsRaw, credentialOverrides)
+		if err != nil {
+			return "", err
+		}
+		if candidate == "" {
+			continue
+		}
+		if derived == 0 {
+			_, _ = builder.WriteString("CASE id")
+		}
+		_, _ = builder.WriteString(" WHEN " + strconv.FormatInt(id, 10) + " THEN " + codexFingerprintSeedCandidateLiteral(candidate))
+		derived++
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if derived == 0 {
+		return "NULL", nil
+	}
+	_, _ = builder.WriteString(" ELSE NULL END")
+	return builder.String(), nil
+}
+
+// deriveCodexFingerprintSeedCandidate locks one account identity through exec.
+// Missing/unidentifiable rows return an empty candidate; actual store/decoding
+// failures propagate so they cannot silently install an unrelated random seed.
+func deriveCodexFingerprintSeedCandidate(ctx context.Context, exec sqlExecutor, id int64, credentialOverrides map[string]any) (string, error) {
+	rows, err := exec.QueryContext(ctx,
+		"SELECT platform, type, COALESCE(credentials::text, '{}') FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+		id,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+	var platform, accountType, credentialsRaw string
+	if err := rows.Scan(&platform, &accountType, &credentialsRaw); err != nil {
+		return "", err
+	}
+	return deriveCodexFingerprintSeedCandidateFromIdentity(platform, accountType, credentialsRaw, credentialOverrides)
+}
+
+func deriveCodexFingerprintSeedCandidateFromIdentity(platform, accountType, credentialsRaw string, credentialOverrides map[string]any) (string, error) {
+	credentials := map[string]any{}
+	if err := json.Unmarshal([]byte(credentialsRaw), &credentials); err != nil {
+		return "", err
+	}
+	for key, value := range credentialOverrides {
+		credentials[key] = value
+	}
+	candidate, ok := service.DeriveCodexFingerprintSeed(platform, accountType, credentials)
+	if !ok {
+		return "", nil
+	}
+	return candidate, nil
 }
 
 func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]any {
@@ -2621,11 +2729,12 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 
 	clearProbeSnapshot := upstreamBillingProbeExplicitlyDisabled(updates) || upstreamBillingProbeSnapshotClearRequested(updates)
 	durableSchedulerChange := shouldEnqueueSchedulerOutboxForExtraUpdates(updates) || clearProbeSnapshot
+	ensureFingerprintSeed := service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates)
 	baseCtx := ctx
 	contextTx := dbent.TxFromContext(ctx)
 	client := clientFromContext(ctx, r.client)
 	var tx *dbent.Tx
-	if durableSchedulerChange && contextTx == nil {
+	if (durableSchedulerChange || ensureFingerprintSeed) && contextTx == nil {
 		var txErr error
 		tx, txErr = r.client.Tx(ctx)
 		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
@@ -2641,8 +2750,12 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	if clearProbeSnapshot {
 		extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
 	}
-	if service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates) {
-		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
+	if ensureFingerprintSeed {
+		candidate, candidateErr := deriveCodexFingerprintSeedCandidate(ctx, client, id, nil)
+		if candidateErr != nil {
+			return candidateErr
+		}
+		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression, codexFingerprintSeedCandidateLiteral(candidate))
 	}
 	result, err := client.ExecContext(
 		ctx,
@@ -2665,23 +2778,218 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 			return err
 		}
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	if contextTx == nil {
+		// 提交后从数据库重载单账号快照，避免局部 patch 覆盖并发写入，
+		// 同时让 sticky session / GetAccount 立即看到新的 extra。
+		r.syncSchedulerAccountSnapshot(baseCtx, id)
+	}
+	return nil
+}
+
+// EnsureCodexFingerprintSeed atomically preserves a valid account seed or creates
+// one for an OpenAI OAuth account. Concurrent first requests serialize on the row
+// and all callers read the same winning seed.
+func (r *accountRepository) EnsureCodexFingerprintSeed(ctx context.Context, id int64) (string, error) {
+	baseCtx := ctx
+	contextTx := dbent.TxFromContext(ctx)
+	exec := r.sql
+	var tx *dbent.Tx
+	if contextTx != nil {
+		exec = contextTx.Client()
+	} else if r.client != nil {
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
+			return "", txErr
+		}
 		if tx != nil {
-			if err := tx.Commit(); err != nil {
-				return err
-			}
+			defer func() { _ = tx.Rollback() }()
+			ctx = dbent.NewTxContext(ctx, tx)
+			exec = tx.Client()
 		}
-		if contextTx == nil {
-			r.syncSchedulerAccountSnapshot(baseCtx, id)
+	}
+
+	candidate, err := deriveCodexFingerprintSeedCandidate(ctx, exec, id, nil)
+	if err != nil {
+		return "", err
+	}
+	extraExpression := ensureCodexFingerprintSeedSQL("COALESCE(extra, '{}'::jsonb)", codexFingerprintSeedCandidateLiteral(candidate))
+	rows, err := exec.QueryContext(ctx,
+		"UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW() "+
+			"WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai' AND type = 'oauth' AND NOT COALESCE("+codexFingerprintSeedValidSQL("extra")+", false) "+
+			"RETURNING extra ->> 'codex_fingerprint_seed'",
+		id,
+	)
+	if err != nil {
+		return "", err
+	}
+	seed, updated, err := scanSingleString(rows)
+	if err != nil {
+		return "", err
+	}
+	if !updated {
+		rows, err = exec.QueryContext(ctx,
+			"SELECT extra ->> 'codex_fingerprint_seed' FROM accounts "+
+				"WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai' AND type = 'oauth' AND COALESCE("+codexFingerprintSeedValidSQL("extra")+", false)",
+			id,
+		)
+		if err != nil {
+			return "", err
 		}
-	} else {
-		// 观测型 extra 字段不需要触发 bucket 重建，但仍同步单账号快照，
-		// 让 sticky session / GetAccount 命中缓存时也能读到最新数据，
-		// 同时避免缓存局部 patch 覆盖掉并发写入的其它账号字段。
+		var found bool
+		seed, found, err = scanSingleString(rows)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return "", service.ErrAccountNotFound
+		}
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+	}
+	if updated && contextTx == nil {
+		r.syncSchedulerAccountSnapshot(baseCtx, id)
+	}
+	return seed, nil
+}
+
+// EnsureAccountExtraValue installs value only while key is absent and returns
+// the durable winner. The UPDATE predicate is rechecked after PostgreSQL row-lock
+// waits, so concurrent first writers cannot overwrite one another.
+func (r *accountRepository) EnsureAccountExtraValue(ctx context.Context, id int64, key string, value any) (any, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, errors.New("account extra key is required")
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := r.sql.QueryContext(ctx,
+		"UPDATE accounts SET extra = jsonb_set(COALESCE(extra, '{}'::jsonb), ARRAY[$2]::text[], $3::jsonb, true), updated_at = NOW() "+
+			"WHERE id = $1 AND deleted_at IS NULL AND NOT (COALESCE(extra, '{}'::jsonb) ? $2) RETURNING extra -> $2",
+		id, key, string(payload),
+	)
+	if err != nil {
+		return nil, err
+	}
+	winner, updated, err := scanSingleJSONValue(rows)
+	if err != nil {
+		return nil, err
+	}
+	if updated {
 		if dbent.TxFromContext(ctx) == nil {
 			r.syncSchedulerAccountSnapshot(ctx, id)
 		}
+		return winner, nil
 	}
-	return nil
+
+	rows, err = r.sql.QueryContext(ctx,
+		"SELECT extra -> $2 FROM accounts WHERE id = $1 AND deleted_at IS NULL AND COALESCE(extra, '{}'::jsonb) ? $2",
+		id, key,
+	)
+	if err != nil {
+		return nil, err
+	}
+	winner, found, err := scanSingleJSONValue(rows)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, service.ErrAccountNotFound
+	}
+	return winner, nil
+}
+
+// CompareAndSwapAccountExtraValue atomically replaces one account extra value
+// only when it still equals expected. On contention it returns the durable
+// winner so callers can recompute and retry without holding an application lock.
+func (r *accountRepository) CompareAndSwapAccountExtraValue(ctx context.Context, id int64, key string, expected, replacement any) (any, bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, false, errors.New("account extra key is required")
+	}
+	expectedJSON, err := json.Marshal(expected)
+	if err != nil {
+		return nil, false, err
+	}
+	replacementJSON, err := json.Marshal(replacement)
+	if err != nil {
+		return nil, false, err
+	}
+
+	rows, err := r.sql.QueryContext(ctx,
+		"UPDATE accounts SET extra = jsonb_set(COALESCE(extra, '{}'::jsonb), ARRAY[$2]::text[], $4::jsonb, true), updated_at = NOW() "+
+			"WHERE id = $1 AND deleted_at IS NULL AND COALESCE(extra -> $2, 'null'::jsonb) = $3::jsonb RETURNING extra -> $2",
+		id, key, string(expectedJSON), string(replacementJSON),
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	winner, swapped, err := scanSingleJSONValue(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	if swapped {
+		if dbent.TxFromContext(ctx) == nil {
+			r.syncSchedulerAccountSnapshot(ctx, id)
+		}
+		return winner, true, nil
+	}
+
+	rows, err = r.sql.QueryContext(ctx,
+		"SELECT extra -> $2 FROM accounts WHERE id = $1 AND deleted_at IS NULL AND COALESCE(extra, '{}'::jsonb) ? $2",
+		id, key,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	winner, found, err := scanSingleJSONValue(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	if !found {
+		return nil, false, service.ErrAccountNotFound
+	}
+	return winner, false, nil
+}
+
+func scanSingleString(rows *sql.Rows) (string, bool, error) {
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return "", false, rows.Err()
+	}
+	var value string
+	if err := rows.Scan(&value); err != nil {
+		return "", false, err
+	}
+	return value, true, rows.Err()
+}
+
+func scanSingleJSONValue(rows *sql.Rows) (any, bool, error) {
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return nil, false, rows.Err()
+	}
+	var raw []byte
+	if err := rows.Scan(&raw); err != nil {
+		return nil, false, err
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false, err
+	}
+	return value, true, rows.Err()
 }
 
 // UpdateUpstreamBillingProbeSnapshot stores a probe result only while the
@@ -2886,6 +3194,33 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		return 0, nil
 	}
 	updates.Extra = stripCodexFingerprintSeedFromExtraUpdate(updates.Extra)
+	baseCtx := ctx
+	contextTx := dbent.TxFromContext(ctx)
+	exec := r.sql
+	var tx *dbent.Tx
+	if contextTx != nil {
+		exec = contextTx.Client()
+	}
+	ensureTransaction := func() error {
+		if contextTx != nil || tx != nil || r.client == nil {
+			return nil
+		}
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
+			return txErr
+		}
+		if tx != nil {
+			ctx = dbent.NewTxContext(ctx, tx)
+			exec = tx.Client()
+		}
+		return nil
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
 
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 8)
@@ -3013,7 +3348,14 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			extraExpression = "CASE WHEN " + snapshotIdentityChanged + " THEN (" + extraExpression + ") - 'ollama_cloud_usage_snapshot' ELSE " + extraExpression + " END"
 		}
 		if updates.EnsureCodexFingerprintSeed {
-			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
+			if err := ensureTransaction(); err != nil {
+				return 0, err
+			}
+			fallbackSQL, err := bulkCodexFingerprintSeedFallbackSQL(ctx, exec, ids, updates.Credentials)
+			if err != nil {
+				return 0, err
+			}
+			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression, fallbackSQL)
 		}
 		setClauses = append(setClauses, "extra = "+extraExpression)
 	}
@@ -3033,23 +3375,8 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	}
 	query := "UPDATE accounts SET " + joinClauses(setClauses, ", ") + whereClause
 
-	baseCtx := ctx
-	contextTx := dbent.TxFromContext(ctx)
-	exec := r.sql
-	var tx *dbent.Tx
-	if contextTx != nil {
-		exec = contextTx.Client()
-	} else if r.client != nil {
-		var txErr error
-		tx, txErr = r.client.Tx(ctx)
-		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
-			return 0, txErr
-		}
-		if tx != nil {
-			defer func() { _ = tx.Rollback() }()
-			ctx = dbent.NewTxContext(ctx, tx)
-			exec = tx.Client()
-		}
+	if err := ensureTransaction(); err != nil {
+		return 0, err
 	}
 
 	result, err := exec.ExecContext(ctx, query, args...)
