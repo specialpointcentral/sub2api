@@ -32,13 +32,56 @@ func NormalizeCodexClientVersion(version string) string {
 	return version
 }
 
-// buildCodexCLIUserAgent 按版本号拼出规范 Codex TUI User-Agent。
-// UA 形态只在 codexCLIUserAgentSuffix 一处定义，避免多处拼装漂移。
+// codexSandboxForUserAgent 按最终出站 User-Agent 的 OS 返回真实 Codex
+// turn metadata 使用的 sandbox 名称。识别不到 OS 时返回空串，由调用方保留
+// 客户端原值，避免凭不完整 UA 猜测运行平台。
+func codexSandboxForUserAgent(userAgent string) string {
+	platform := codexUserAgentPlatform(userAgent)
+	switch {
+	case hasCodexPlatformName(platform, "ubuntu"), hasCodexPlatformName(platform, "linux"):
+		return "seccomp"
+	case hasCodexPlatformName(platform, "mac os x"), hasCodexPlatformName(platform, "macos"),
+		hasCodexPlatformName(platform, "darwin"), hasCodexPlatformName(platform, "mac"):
+		return "seatbelt"
+	default:
+		return ""
+	}
+}
+
+func codexUserAgentPlatform(userAgent string) string {
+	ua := strings.TrimSpace(userAgent)
+	slash := strings.IndexByte(ua, '/')
+	if slash <= 0 {
+		return ""
+	}
+	rest := ua[slash+1:]
+	space := strings.IndexByte(rest, ' ')
+	if space < 0 {
+		return ""
+	}
+	platformGroup := strings.TrimLeft(rest[space+1:], " ")
+	if !strings.HasPrefix(platformGroup, "(") {
+		return ""
+	}
+	closeIndex := strings.IndexByte(platformGroup, ')')
+	if closeIndex <= 1 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(platformGroup[1:closeIndex]))
+}
+
+func hasCodexPlatformName(platform, name string) bool {
+	return platform == name || strings.HasPrefix(platform, name+" ")
+}
+
+// buildCodexCLIUserAgent 按版本号拼出规范 Codex TUI User-Agent，并让首段和
+// app-server clientInfo 尾部组件共享同一版本声明。
 func buildCodexCLIUserAgent(version string) string {
 	if version = NormalizeCodexClientVersion(version); version == "" {
 		return codexCLIUserAgent
 	}
-	return openai.CodexDefaultOriginator + "/" + version + codexCLIUserAgentSuffix
+	return openai.CodexDefaultOriginator + "/" + version + codexCLIUserAgentSuffix +
+		" (" + openai.CodexDefaultOriginator + "; " + version + ")"
 }
 
 // codexIdentityEnforcement 控制 enforceCodexIdentityHeaders 是否强制统一出站身份，
