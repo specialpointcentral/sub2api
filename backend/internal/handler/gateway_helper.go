@@ -162,8 +162,15 @@ func (e *WaitQueueFullError) Error() string {
 // ConcurrencyHelper provides common concurrency slot management for gateway handlers
 type ConcurrencyHelper struct {
 	concurrencyService *service.ConcurrencyService
+	modelRateLimiter   proactiveModelRateLimitAdmitter
 	pingFormat         SSEPingFormat
 	pingInterval       time.Duration
+}
+
+func (h *ConcurrencyHelper) SetModelRateLimiter(limiter proactiveModelRateLimitAdmitter) {
+	if h != nil {
+		h.modelRateLimiter = limiter
+	}
 }
 
 // NewConcurrencyHelper creates a new ConcurrencyHelper
@@ -261,9 +268,13 @@ func (h *ConcurrencyHelper) TryAcquireAccountSlot(ctx context.Context, accountID
 }
 
 // AcquireUserSlotWithWait acquires a user concurrency slot, waiting if necessary.
-// For streaming requests, sends ping events during the wait.
+// For streaming requests, sends ping events during the wait unless proactive
+// per-model rules may need to return an uncommitted 429 after the wait.
 // streamStarted is updated if streaming response has begun.
 func (h *ConcurrencyHelper) AcquireUserSlotWithWait(c *gin.Context, userID int64, maxConcurrency int, isStream bool, streamStarted *bool) (func(), error) {
+	if isStream && h.modelRateLimiter != nil && h.modelRateLimiter.HasEffectiveRules(c.Request.Context(), userID) {
+		isStream = false
+	}
 	return h.acquireUserSlotWithWaitTimeout(c, userID, maxConcurrency, maxConcurrencyWait, isStream, streamStarted)
 }
 

@@ -863,6 +863,7 @@ func ProvideOpenAIGatewayService(
 	settingService *SettingService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 	openAIAccountRuntimeCache OpenAIAccountRuntimeCache,
+	modelRateLimitCounters ModelRateLimitCounterCache,
 ) *OpenAIGatewayService {
 	service := NewOpenAIGatewayService(
 		accountRepo,
@@ -890,6 +891,7 @@ func ProvideOpenAIGatewayService(
 	)
 	service.tlsFPProfileService = tlsFPProfileService
 	service.SetOpenAIAccountRuntimeCache(openAIAccountRuntimeCache)
+	service.modelRateLimitCounters = modelRateLimitCounters
 	return service
 }
 
@@ -934,6 +936,8 @@ var ProviderSet = wire.NewSet(
 	NewAnnouncementService,
 	NewAdminService,
 	NewGatewayService,
+	NewModelRateLimitCandidateProvider,
+	NewProactiveModelRateLimitService,
 	ProvideOpenAIGatewayService,
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,

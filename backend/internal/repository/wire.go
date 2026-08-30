@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/Wei-Shaw/sub2api/ent"
@@ -24,6 +25,10 @@ func ProvideConcurrencyCache(rdb *redis.Client, cfg *config.Config) service.Conc
 		waitTTLSeconds = cfg.Gateway.ConcurrencySlotTTLMinutes * 60
 	}
 	return NewConcurrencyCache(rdb, cfg.Gateway.ConcurrencySlotTTLMinutes, waitTTLSeconds)
+}
+
+func ProvideProactiveModelRateLimitCache(rdb *redis.Client, cfg *config.Config) *proactiveModelRateLimitCache {
+	return NewProactiveModelRateLimitCache(rdb, time.Duration(cfg.Gateway.ConcurrencySlotTTLMinutes)*time.Minute)
 }
 
 // ProvideGitHubReleaseClient 创建 GitHub Release 客户端
@@ -105,6 +110,7 @@ var ProviderSet = wire.NewSet(
 	NewAffiliateRepository,
 	NewUserPlatformQuotaRepository,     // T14: user × platform quota
 	NewUserPlatformQuotaServiceAdapter, // T14: adapter → service.UserPlatformQuotaRepository
+	NewModelRateLimitRuleRepository,
 
 	// Cache implementations
 	NewGatewayCache,
@@ -116,6 +122,9 @@ var ProviderSet = wire.NewSet(
 	NewOpenAIAccountRuntimeCache,
 	NewInternal500CounterCache,
 	ProvideConcurrencyCache,
+	ProvideProactiveModelRateLimitCache,
+	wire.Bind(new(service.ModelRateLimitCounterCache), new(*proactiveModelRateLimitCache)),
+	wire.Bind(new(service.ModelRateLimitConfigCache), new(*proactiveModelRateLimitCache)),
 	ProvideSessionLimitCache,
 	NewRPMCache,
 	NewUserRPMCache,

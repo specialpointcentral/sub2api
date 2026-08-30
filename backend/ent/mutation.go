@@ -31,6 +31,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/modelratelimitrule"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
@@ -83,6 +84,7 @@ const (
 	TypeGroup                         = "Group"
 	TypeIdempotencyRecord             = "IdempotencyRecord"
 	TypeIdentityAdoptionDecision      = "IdentityAdoptionDecision"
+	TypeModelRateLimitRule            = "ModelRateLimitRule"
 	TypePaymentAuditLog               = "PaymentAuditLog"
 	TypePaymentOrder                  = "PaymentOrder"
 	TypePaymentProviderInstance       = "PaymentProviderInstance"
@@ -29340,6 +29342,908 @@ func (m *IdentityAdoptionDecisionMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown IdentityAdoptionDecision edge %s", name)
 }
 
+// ModelRateLimitRuleMutation represents an operation that mutates the ModelRateLimitRule nodes in the graph.
+type ModelRateLimitRuleMutation struct {
+	config
+	op                   Op
+	typ                  string
+	id                   *int64
+	created_at           *time.Time
+	updated_at           *time.Time
+	model_pattern        *string
+	normalized_pattern   *string
+	concurrency_limit    *int
+	addconcurrency_limit *int
+	rpm_limit            *int
+	addrpm_limit         *int
+	tpm_limit            *int
+	addtpm_limit         *int
+	clearedFields        map[string]struct{}
+	user                 *int64
+	cleareduser          bool
+	done                 bool
+	oldValue             func(context.Context) (*ModelRateLimitRule, error)
+	predicates           []predicate.ModelRateLimitRule
+}
+
+var _ ent.Mutation = (*ModelRateLimitRuleMutation)(nil)
+
+// modelratelimitruleOption allows management of the mutation configuration using functional options.
+type modelratelimitruleOption func(*ModelRateLimitRuleMutation)
+
+// newModelRateLimitRuleMutation creates new mutation for the ModelRateLimitRule entity.
+func newModelRateLimitRuleMutation(c config, op Op, opts ...modelratelimitruleOption) *ModelRateLimitRuleMutation {
+	m := &ModelRateLimitRuleMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeModelRateLimitRule,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withModelRateLimitRuleID sets the ID field of the mutation.
+func withModelRateLimitRuleID(id int64) modelratelimitruleOption {
+	return func(m *ModelRateLimitRuleMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ModelRateLimitRule
+		)
+		m.oldValue = func(ctx context.Context) (*ModelRateLimitRule, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ModelRateLimitRule.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withModelRateLimitRule sets the old ModelRateLimitRule of the mutation.
+func withModelRateLimitRule(node *ModelRateLimitRule) modelratelimitruleOption {
+	return func(m *ModelRateLimitRuleMutation) {
+		m.oldValue = func(context.Context) (*ModelRateLimitRule, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ModelRateLimitRuleMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ModelRateLimitRuleMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ModelRateLimitRuleMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ModelRateLimitRuleMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ModelRateLimitRule.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ModelRateLimitRuleMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ModelRateLimitRuleMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ModelRateLimitRule entity.
+// If the ModelRateLimitRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ModelRateLimitRuleMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ModelRateLimitRuleMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ModelRateLimitRuleMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ModelRateLimitRuleMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the ModelRateLimitRule entity.
+// If the ModelRateLimitRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ModelRateLimitRuleMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ModelRateLimitRuleMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *ModelRateLimitRuleMutation) SetUserID(i int64) {
+	m.user = &i
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *ModelRateLimitRuleMutation) UserID() (r int64, exists bool) {
+	v := m.user
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the ModelRateLimitRule entity.
+// If the ModelRateLimitRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ModelRateLimitRuleMutation) OldUserID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// ClearUserID clears the value of the "user_id" field.
+func (m *ModelRateLimitRuleMutation) ClearUserID() {
+	m.user = nil
+	m.clearedFields[modelratelimitrule.FieldUserID] = struct{}{}
+}
+
+// UserIDCleared returns if the "user_id" field was cleared in this mutation.
+func (m *ModelRateLimitRuleMutation) UserIDCleared() bool {
+	_, ok := m.clearedFields[modelratelimitrule.FieldUserID]
+	return ok
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *ModelRateLimitRuleMutation) ResetUserID() {
+	m.user = nil
+	delete(m.clearedFields, modelratelimitrule.FieldUserID)
+}
+
+// SetModelPattern sets the "model_pattern" field.
+func (m *ModelRateLimitRuleMutation) SetModelPattern(s string) {
+	m.model_pattern = &s
+}
+
+// ModelPattern returns the value of the "model_pattern" field in the mutation.
+func (m *ModelRateLimitRuleMutation) ModelPattern() (r string, exists bool) {
+	v := m.model_pattern
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldModelPattern returns the old "model_pattern" field's value of the ModelRateLimitRule entity.
+// If the ModelRateLimitRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ModelRateLimitRuleMutation) OldModelPattern(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldModelPattern is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldModelPattern requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldModelPattern: %w", err)
+	}
+	return oldValue.ModelPattern, nil
+}
+
+// ResetModelPattern resets all changes to the "model_pattern" field.
+func (m *ModelRateLimitRuleMutation) ResetModelPattern() {
+	m.model_pattern = nil
+}
+
+// SetNormalizedPattern sets the "normalized_pattern" field.
+func (m *ModelRateLimitRuleMutation) SetNormalizedPattern(s string) {
+	m.normalized_pattern = &s
+}
+
+// NormalizedPattern returns the value of the "normalized_pattern" field in the mutation.
+func (m *ModelRateLimitRuleMutation) NormalizedPattern() (r string, exists bool) {
+	v := m.normalized_pattern
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNormalizedPattern returns the old "normalized_pattern" field's value of the ModelRateLimitRule entity.
+// If the ModelRateLimitRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ModelRateLimitRuleMutation) OldNormalizedPattern(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNormalizedPattern is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNormalizedPattern requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNormalizedPattern: %w", err)
+	}
+	return oldValue.NormalizedPattern, nil
+}
+
+// ResetNormalizedPattern resets all changes to the "normalized_pattern" field.
+func (m *ModelRateLimitRuleMutation) ResetNormalizedPattern() {
+	m.normalized_pattern = nil
+}
+
+// SetConcurrencyLimit sets the "concurrency_limit" field.
+func (m *ModelRateLimitRuleMutation) SetConcurrencyLimit(i int) {
+	m.concurrency_limit = &i
+	m.addconcurrency_limit = nil
+}
+
+// ConcurrencyLimit returns the value of the "concurrency_limit" field in the mutation.
+func (m *ModelRateLimitRuleMutation) ConcurrencyLimit() (r int, exists bool) {
+	v := m.concurrency_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConcurrencyLimit returns the old "concurrency_limit" field's value of the ModelRateLimitRule entity.
+// If the ModelRateLimitRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ModelRateLimitRuleMutation) OldConcurrencyLimit(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConcurrencyLimit is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConcurrencyLimit requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConcurrencyLimit: %w", err)
+	}
+	return oldValue.ConcurrencyLimit, nil
+}
+
+// AddConcurrencyLimit adds i to the "concurrency_limit" field.
+func (m *ModelRateLimitRuleMutation) AddConcurrencyLimit(i int) {
+	if m.addconcurrency_limit != nil {
+		*m.addconcurrency_limit += i
+	} else {
+		m.addconcurrency_limit = &i
+	}
+}
+
+// AddedConcurrencyLimit returns the value that was added to the "concurrency_limit" field in this mutation.
+func (m *ModelRateLimitRuleMutation) AddedConcurrencyLimit() (r int, exists bool) {
+	v := m.addconcurrency_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetConcurrencyLimit resets all changes to the "concurrency_limit" field.
+func (m *ModelRateLimitRuleMutation) ResetConcurrencyLimit() {
+	m.concurrency_limit = nil
+	m.addconcurrency_limit = nil
+}
+
+// SetRpmLimit sets the "rpm_limit" field.
+func (m *ModelRateLimitRuleMutation) SetRpmLimit(i int) {
+	m.rpm_limit = &i
+	m.addrpm_limit = nil
+}
+
+// RpmLimit returns the value of the "rpm_limit" field in the mutation.
+func (m *ModelRateLimitRuleMutation) RpmLimit() (r int, exists bool) {
+	v := m.rpm_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRpmLimit returns the old "rpm_limit" field's value of the ModelRateLimitRule entity.
+// If the ModelRateLimitRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ModelRateLimitRuleMutation) OldRpmLimit(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRpmLimit is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRpmLimit requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRpmLimit: %w", err)
+	}
+	return oldValue.RpmLimit, nil
+}
+
+// AddRpmLimit adds i to the "rpm_limit" field.
+func (m *ModelRateLimitRuleMutation) AddRpmLimit(i int) {
+	if m.addrpm_limit != nil {
+		*m.addrpm_limit += i
+	} else {
+		m.addrpm_limit = &i
+	}
+}
+
+// AddedRpmLimit returns the value that was added to the "rpm_limit" field in this mutation.
+func (m *ModelRateLimitRuleMutation) AddedRpmLimit() (r int, exists bool) {
+	v := m.addrpm_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRpmLimit resets all changes to the "rpm_limit" field.
+func (m *ModelRateLimitRuleMutation) ResetRpmLimit() {
+	m.rpm_limit = nil
+	m.addrpm_limit = nil
+}
+
+// SetTpmLimit sets the "tpm_limit" field.
+func (m *ModelRateLimitRuleMutation) SetTpmLimit(i int) {
+	m.tpm_limit = &i
+	m.addtpm_limit = nil
+}
+
+// TpmLimit returns the value of the "tpm_limit" field in the mutation.
+func (m *ModelRateLimitRuleMutation) TpmLimit() (r int, exists bool) {
+	v := m.tpm_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTpmLimit returns the old "tpm_limit" field's value of the ModelRateLimitRule entity.
+// If the ModelRateLimitRule object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ModelRateLimitRuleMutation) OldTpmLimit(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTpmLimit is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTpmLimit requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTpmLimit: %w", err)
+	}
+	return oldValue.TpmLimit, nil
+}
+
+// AddTpmLimit adds i to the "tpm_limit" field.
+func (m *ModelRateLimitRuleMutation) AddTpmLimit(i int) {
+	if m.addtpm_limit != nil {
+		*m.addtpm_limit += i
+	} else {
+		m.addtpm_limit = &i
+	}
+}
+
+// AddedTpmLimit returns the value that was added to the "tpm_limit" field in this mutation.
+func (m *ModelRateLimitRuleMutation) AddedTpmLimit() (r int, exists bool) {
+	v := m.addtpm_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearTpmLimit clears the value of the "tpm_limit" field.
+func (m *ModelRateLimitRuleMutation) ClearTpmLimit() {
+	m.tpm_limit = nil
+	m.addtpm_limit = nil
+	m.clearedFields[modelratelimitrule.FieldTpmLimit] = struct{}{}
+}
+
+// TpmLimitCleared returns if the "tpm_limit" field was cleared in this mutation.
+func (m *ModelRateLimitRuleMutation) TpmLimitCleared() bool {
+	_, ok := m.clearedFields[modelratelimitrule.FieldTpmLimit]
+	return ok
+}
+
+// ResetTpmLimit resets all changes to the "tpm_limit" field.
+func (m *ModelRateLimitRuleMutation) ResetTpmLimit() {
+	m.tpm_limit = nil
+	m.addtpm_limit = nil
+	delete(m.clearedFields, modelratelimitrule.FieldTpmLimit)
+}
+
+// ClearUser clears the "user" edge to the User entity.
+func (m *ModelRateLimitRuleMutation) ClearUser() {
+	m.cleareduser = true
+	m.clearedFields[modelratelimitrule.FieldUserID] = struct{}{}
+}
+
+// UserCleared reports if the "user" edge to the User entity was cleared.
+func (m *ModelRateLimitRuleMutation) UserCleared() bool {
+	return m.UserIDCleared() || m.cleareduser
+}
+
+// UserIDs returns the "user" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// UserID instead. It exists only for internal usage by the builders.
+func (m *ModelRateLimitRuleMutation) UserIDs() (ids []int64) {
+	if id := m.user; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetUser resets all changes to the "user" edge.
+func (m *ModelRateLimitRuleMutation) ResetUser() {
+	m.user = nil
+	m.cleareduser = false
+}
+
+// Where appends a list predicates to the ModelRateLimitRuleMutation builder.
+func (m *ModelRateLimitRuleMutation) Where(ps ...predicate.ModelRateLimitRule) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ModelRateLimitRuleMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ModelRateLimitRuleMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ModelRateLimitRule, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ModelRateLimitRuleMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ModelRateLimitRuleMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ModelRateLimitRule).
+func (m *ModelRateLimitRuleMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ModelRateLimitRuleMutation) Fields() []string {
+	fields := make([]string, 0, 8)
+	if m.created_at != nil {
+		fields = append(fields, modelratelimitrule.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, modelratelimitrule.FieldUpdatedAt)
+	}
+	if m.user != nil {
+		fields = append(fields, modelratelimitrule.FieldUserID)
+	}
+	if m.model_pattern != nil {
+		fields = append(fields, modelratelimitrule.FieldModelPattern)
+	}
+	if m.normalized_pattern != nil {
+		fields = append(fields, modelratelimitrule.FieldNormalizedPattern)
+	}
+	if m.concurrency_limit != nil {
+		fields = append(fields, modelratelimitrule.FieldConcurrencyLimit)
+	}
+	if m.rpm_limit != nil {
+		fields = append(fields, modelratelimitrule.FieldRpmLimit)
+	}
+	if m.tpm_limit != nil {
+		fields = append(fields, modelratelimitrule.FieldTpmLimit)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ModelRateLimitRuleMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case modelratelimitrule.FieldCreatedAt:
+		return m.CreatedAt()
+	case modelratelimitrule.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case modelratelimitrule.FieldUserID:
+		return m.UserID()
+	case modelratelimitrule.FieldModelPattern:
+		return m.ModelPattern()
+	case modelratelimitrule.FieldNormalizedPattern:
+		return m.NormalizedPattern()
+	case modelratelimitrule.FieldConcurrencyLimit:
+		return m.ConcurrencyLimit()
+	case modelratelimitrule.FieldRpmLimit:
+		return m.RpmLimit()
+	case modelratelimitrule.FieldTpmLimit:
+		return m.TpmLimit()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ModelRateLimitRuleMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case modelratelimitrule.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case modelratelimitrule.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case modelratelimitrule.FieldUserID:
+		return m.OldUserID(ctx)
+	case modelratelimitrule.FieldModelPattern:
+		return m.OldModelPattern(ctx)
+	case modelratelimitrule.FieldNormalizedPattern:
+		return m.OldNormalizedPattern(ctx)
+	case modelratelimitrule.FieldConcurrencyLimit:
+		return m.OldConcurrencyLimit(ctx)
+	case modelratelimitrule.FieldRpmLimit:
+		return m.OldRpmLimit(ctx)
+	case modelratelimitrule.FieldTpmLimit:
+		return m.OldTpmLimit(ctx)
+	}
+	return nil, fmt.Errorf("unknown ModelRateLimitRule field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ModelRateLimitRuleMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case modelratelimitrule.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case modelratelimitrule.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case modelratelimitrule.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case modelratelimitrule.FieldModelPattern:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetModelPattern(v)
+		return nil
+	case modelratelimitrule.FieldNormalizedPattern:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNormalizedPattern(v)
+		return nil
+	case modelratelimitrule.FieldConcurrencyLimit:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConcurrencyLimit(v)
+		return nil
+	case modelratelimitrule.FieldRpmLimit:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRpmLimit(v)
+		return nil
+	case modelratelimitrule.FieldTpmLimit:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTpmLimit(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ModelRateLimitRule field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ModelRateLimitRuleMutation) AddedFields() []string {
+	var fields []string
+	if m.addconcurrency_limit != nil {
+		fields = append(fields, modelratelimitrule.FieldConcurrencyLimit)
+	}
+	if m.addrpm_limit != nil {
+		fields = append(fields, modelratelimitrule.FieldRpmLimit)
+	}
+	if m.addtpm_limit != nil {
+		fields = append(fields, modelratelimitrule.FieldTpmLimit)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ModelRateLimitRuleMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case modelratelimitrule.FieldConcurrencyLimit:
+		return m.AddedConcurrencyLimit()
+	case modelratelimitrule.FieldRpmLimit:
+		return m.AddedRpmLimit()
+	case modelratelimitrule.FieldTpmLimit:
+		return m.AddedTpmLimit()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ModelRateLimitRuleMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case modelratelimitrule.FieldConcurrencyLimit:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddConcurrencyLimit(v)
+		return nil
+	case modelratelimitrule.FieldRpmLimit:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRpmLimit(v)
+		return nil
+	case modelratelimitrule.FieldTpmLimit:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTpmLimit(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ModelRateLimitRule numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ModelRateLimitRuleMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(modelratelimitrule.FieldUserID) {
+		fields = append(fields, modelratelimitrule.FieldUserID)
+	}
+	if m.FieldCleared(modelratelimitrule.FieldTpmLimit) {
+		fields = append(fields, modelratelimitrule.FieldTpmLimit)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ModelRateLimitRuleMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ModelRateLimitRuleMutation) ClearField(name string) error {
+	switch name {
+	case modelratelimitrule.FieldUserID:
+		m.ClearUserID()
+		return nil
+	case modelratelimitrule.FieldTpmLimit:
+		m.ClearTpmLimit()
+		return nil
+	}
+	return fmt.Errorf("unknown ModelRateLimitRule nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ModelRateLimitRuleMutation) ResetField(name string) error {
+	switch name {
+	case modelratelimitrule.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case modelratelimitrule.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case modelratelimitrule.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case modelratelimitrule.FieldModelPattern:
+		m.ResetModelPattern()
+		return nil
+	case modelratelimitrule.FieldNormalizedPattern:
+		m.ResetNormalizedPattern()
+		return nil
+	case modelratelimitrule.FieldConcurrencyLimit:
+		m.ResetConcurrencyLimit()
+		return nil
+	case modelratelimitrule.FieldRpmLimit:
+		m.ResetRpmLimit()
+		return nil
+	case modelratelimitrule.FieldTpmLimit:
+		m.ResetTpmLimit()
+		return nil
+	}
+	return fmt.Errorf("unknown ModelRateLimitRule field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ModelRateLimitRuleMutation) AddedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.user != nil {
+		edges = append(edges, modelratelimitrule.EdgeUser)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ModelRateLimitRuleMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case modelratelimitrule.EdgeUser:
+		if id := m.user; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ModelRateLimitRuleMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 1)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ModelRateLimitRuleMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ModelRateLimitRuleMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.cleareduser {
+		edges = append(edges, modelratelimitrule.EdgeUser)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ModelRateLimitRuleMutation) EdgeCleared(name string) bool {
+	switch name {
+	case modelratelimitrule.EdgeUser:
+		return m.cleareduser
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ModelRateLimitRuleMutation) ClearEdge(name string) error {
+	switch name {
+	case modelratelimitrule.EdgeUser:
+		m.ClearUser()
+		return nil
+	}
+	return fmt.Errorf("unknown ModelRateLimitRule unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ModelRateLimitRuleMutation) ResetEdge(name string) error {
+	switch name {
+	case modelratelimitrule.EdgeUser:
+		m.ResetUser()
+		return nil
+	}
+	return fmt.Errorf("unknown ModelRateLimitRule edge %s", name)
+}
+
 // PaymentAuditLogMutation represents an operation that mutates the PaymentAuditLog nodes in the graph.
 type PaymentAuditLogMutation struct {
 	config
@@ -48472,6 +49376,9 @@ type UserMutation struct {
 	platform_quotas               map[int64]struct{}
 	removedplatform_quotas        map[int64]struct{}
 	clearedplatform_quotas        bool
+	model_rate_limit_rules        map[int64]struct{}
+	removedmodel_rate_limit_rules map[int64]struct{}
+	clearedmodel_rate_limit_rules bool
 	done                          bool
 	oldValue                      func(context.Context) (*User, error)
 	predicates                    []predicate.User
@@ -50376,6 +51283,60 @@ func (m *UserMutation) ResetPlatformQuotas() {
 	m.removedplatform_quotas = nil
 }
 
+// AddModelRateLimitRuleIDs adds the "model_rate_limit_rules" edge to the ModelRateLimitRule entity by ids.
+func (m *UserMutation) AddModelRateLimitRuleIDs(ids ...int64) {
+	if m.model_rate_limit_rules == nil {
+		m.model_rate_limit_rules = make(map[int64]struct{})
+	}
+	for i := range ids {
+		m.model_rate_limit_rules[ids[i]] = struct{}{}
+	}
+}
+
+// ClearModelRateLimitRules clears the "model_rate_limit_rules" edge to the ModelRateLimitRule entity.
+func (m *UserMutation) ClearModelRateLimitRules() {
+	m.clearedmodel_rate_limit_rules = true
+}
+
+// ModelRateLimitRulesCleared reports if the "model_rate_limit_rules" edge to the ModelRateLimitRule entity was cleared.
+func (m *UserMutation) ModelRateLimitRulesCleared() bool {
+	return m.clearedmodel_rate_limit_rules
+}
+
+// RemoveModelRateLimitRuleIDs removes the "model_rate_limit_rules" edge to the ModelRateLimitRule entity by IDs.
+func (m *UserMutation) RemoveModelRateLimitRuleIDs(ids ...int64) {
+	if m.removedmodel_rate_limit_rules == nil {
+		m.removedmodel_rate_limit_rules = make(map[int64]struct{})
+	}
+	for i := range ids {
+		delete(m.model_rate_limit_rules, ids[i])
+		m.removedmodel_rate_limit_rules[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedModelRateLimitRules returns the removed IDs of the "model_rate_limit_rules" edge to the ModelRateLimitRule entity.
+func (m *UserMutation) RemovedModelRateLimitRulesIDs() (ids []int64) {
+	for id := range m.removedmodel_rate_limit_rules {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ModelRateLimitRulesIDs returns the "model_rate_limit_rules" edge IDs in the mutation.
+func (m *UserMutation) ModelRateLimitRulesIDs() (ids []int64) {
+	for id := range m.model_rate_limit_rules {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetModelRateLimitRules resets all changes to the "model_rate_limit_rules" edge.
+func (m *UserMutation) ResetModelRateLimitRules() {
+	m.model_rate_limit_rules = nil
+	m.clearedmodel_rate_limit_rules = false
+	m.removedmodel_rate_limit_rules = nil
+}
+
 // Where appends a list predicates to the UserMutation builder.
 func (m *UserMutation) Where(ps ...predicate.User) {
 	m.predicates = append(m.predicates, ps...)
@@ -51031,7 +51992,7 @@ func (m *UserMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *UserMutation) AddedEdges() []string {
-	edges := make([]string, 0, 13)
+	edges := make([]string, 0, 14)
 	if m.api_keys != nil {
 		edges = append(edges, user.EdgeAPIKeys)
 	}
@@ -51070,6 +52031,9 @@ func (m *UserMutation) AddedEdges() []string {
 	}
 	if m.platform_quotas != nil {
 		edges = append(edges, user.EdgePlatformQuotas)
+	}
+	if m.model_rate_limit_rules != nil {
+		edges = append(edges, user.EdgeModelRateLimitRules)
 	}
 	return edges
 }
@@ -51156,13 +52120,19 @@ func (m *UserMutation) AddedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case user.EdgeModelRateLimitRules:
+		ids := make([]ent.Value, 0, len(m.model_rate_limit_rules))
+		for id := range m.model_rate_limit_rules {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *UserMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 13)
+	edges := make([]string, 0, 14)
 	if m.removedapi_keys != nil {
 		edges = append(edges, user.EdgeAPIKeys)
 	}
@@ -51201,6 +52171,9 @@ func (m *UserMutation) RemovedEdges() []string {
 	}
 	if m.removedplatform_quotas != nil {
 		edges = append(edges, user.EdgePlatformQuotas)
+	}
+	if m.removedmodel_rate_limit_rules != nil {
+		edges = append(edges, user.EdgeModelRateLimitRules)
 	}
 	return edges
 }
@@ -51287,13 +52260,19 @@ func (m *UserMutation) RemovedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case user.EdgeModelRateLimitRules:
+		ids := make([]ent.Value, 0, len(m.removedmodel_rate_limit_rules))
+		for id := range m.removedmodel_rate_limit_rules {
+			ids = append(ids, id)
+		}
+		return ids
 	}
 	return nil
 }
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *UserMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 13)
+	edges := make([]string, 0, 14)
 	if m.clearedapi_keys {
 		edges = append(edges, user.EdgeAPIKeys)
 	}
@@ -51333,6 +52312,9 @@ func (m *UserMutation) ClearedEdges() []string {
 	if m.clearedplatform_quotas {
 		edges = append(edges, user.EdgePlatformQuotas)
 	}
+	if m.clearedmodel_rate_limit_rules {
+		edges = append(edges, user.EdgeModelRateLimitRules)
+	}
 	return edges
 }
 
@@ -51366,6 +52348,8 @@ func (m *UserMutation) EdgeCleared(name string) bool {
 		return m.clearedpending_auth_sessions
 	case user.EdgePlatformQuotas:
 		return m.clearedplatform_quotas
+	case user.EdgeModelRateLimitRules:
+		return m.clearedmodel_rate_limit_rules
 	}
 	return false
 }
@@ -51420,6 +52404,9 @@ func (m *UserMutation) ResetEdge(name string) error {
 		return nil
 	case user.EdgePlatformQuotas:
 		m.ResetPlatformQuotas()
+		return nil
+	case user.EdgeModelRateLimitRules:
+		m.ResetModelRateLimitRules()
 		return nil
 	}
 	return fmt.Errorf("unknown User edge %s", name)

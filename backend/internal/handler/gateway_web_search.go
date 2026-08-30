@@ -112,6 +112,13 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		c.JSON(status, gin.H{"error": gin.H{"type": code, "message": msg}})
 		return
 	}
+	modelRelease, admitted := admitProactiveModelRateLimit(c, h.concurrencyHelper.modelRateLimiter, subject.UserID, searchModel)
+	if !admitted {
+		return
+	}
+	if modelRelease != nil {
+		defer modelRelease()
+	}
 
 	// Use exactly the same scheduling as other requests (SelectAccountWithLoadAwareness handles load, rate limit, sticky, etc.)
 	groupID := apiKey.GroupID
