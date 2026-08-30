@@ -50,6 +50,7 @@ type OpenAIGatewayHandler struct {
 
 type openAIWSTurnChannelMappingSnapshot struct {
 	turn    int
+	model   string
 	mapping service.ChannelMappingResult
 }
 
@@ -580,6 +581,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
+	}
+	modelRelease, admitted := admitProactiveModelRateLimit(c, h.concurrencyHelper.modelRateLimiter, subject.UserID, reqModel)
+	if !admitted {
+		return
+	}
+	if modelRelease != nil {
+		defer modelRelease()
 	}
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
@@ -1208,6 +1216,13 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		}
 		h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
 		return
+	}
+	modelRelease, admitted := admitProactiveModelRateLimit(c, h.concurrencyHelper.modelRateLimiter, subject.UserID, reqModel)
+	if !admitted {
+		return
+	}
+	if modelRelease != nil {
+		defer modelRelease()
 	}
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
@@ -2363,18 +2378,29 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 	var currentUserRelease func()
 	var currentAccountRelease func()
+	var currentModelRelease func()
+	releaseModelRateLimitTurn := func() {
+		if currentModelRelease != nil {
+			currentModelRelease()
+			currentModelRelease = nil
+		}
+	}
 	releaseAccountSlot := func() {
 		if currentAccountRelease != nil {
 			currentAccountRelease()
 			currentAccountRelease = nil
 		}
 	}
-	releaseTurnSlots := func() {
+	releaseUserAndAccountSlots := func() {
 		releaseAccountSlot()
 		if currentUserRelease != nil {
 			currentUserRelease()
 			currentUserRelease = nil
 		}
+	}
+	releaseTurnSlots := func() {
+		releaseUserAndAccountSlots()
+		releaseModelRateLimitTurn()
 	}
 	// 必须尽早注册，确保任何 early return 都能释放已获取的并发槽位。
 	defer releaseTurnSlots()
@@ -2417,6 +2443,40 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if err := h.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		reqLog.Info("openai.websocket_billing_eligibility_check_failed", zap.Error(err))
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
+		return
+	}
+	admitModelRateLimitTurn := func(model string) error {
+		if currentModelRelease != nil || h.concurrencyHelper.modelRateLimiter == nil {
+			return nil
+		}
+		admission, err := h.concurrencyHelper.modelRateLimiter.Admit(ctx, subject.UserID, model)
+		if err != nil {
+			writeProactiveModelRateLimitWSError(ctx, wsConn, "rate_limit_service_unavailable", "api_error", "Per-model rate limit service is temporarily unavailable", 0)
+			return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "per-model rate limit service unavailable", err)
+		}
+		if admission != nil && !admission.Allowed {
+			retryAfter := admission.RetryAfterSeconds
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			logProactiveModelRateLimitRejected(subject.UserID, admission, retryAfter)
+			writeProactiveModelRateLimitWSError(ctx, wsConn, "model_rate_limit_exceeded", "rate_limit_error", "Per-model user rate limit exceeded", retryAfter)
+			return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, fmt.Sprintf("per-model rate limit exceeded; retry after %ds", retryAfter), nil)
+		}
+		if admission != nil && admission.Release != nil {
+			currentModelRelease = wrapReleaseOnDone(ctx, admission.Release)
+		}
+		return nil
+	}
+	if err := admitModelRateLimitTurn(reqModel); err != nil {
+		status := coderws.StatusInternalError
+		reason := err.Error()
+		var closeErr *service.OpenAIWSClientCloseError
+		if errors.As(err, &closeErr) {
+			status = closeErr.StatusCode()
+			reason = closeErr.Reason()
+		}
+		closeOpenAIClientWS(wsConn, status, reason)
 		return
 	}
 
@@ -2674,7 +2734,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// Passthrough rejects overlapping response.create frames, so one immutable
 		// turn-tagged slot preserves the exact mapping used for the in-flight request.
 		var turnChannelMapping atomic.Pointer[openAIWSTurnChannelMappingSnapshot]
-		turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: 1, mapping: channelMappingWS})
+		turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: 1, model: reqModel, mapping: channelMappingWS})
 		// turn 级定价：BeforeTurn 重新冻结 pricingAt 并按最新门复核当前账号；
 		// passthrough 没有 BeforeTurn 时，AfterTurn 回退到 TurnStarted 的所属 turn 时刻。
 		var turnPricing openAIWSTurnPricing
@@ -2714,6 +2774,33 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
 					return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
+				releaseTurnSlots()
+				userRelease, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
+				if err != nil {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
+				}
+				if !userAcquired {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
+				}
+				currentUserRelease = wrapReleaseOnDone(ctx, userRelease)
+				if err := h.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+					releaseTurnSlots()
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
+				}
+				if err := admitModelRateLimitTurn(model); err != nil {
+					releaseTurnSlots()
+					return err
+				}
+				accountRelease, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
+				if err != nil {
+					releaseTurnSlots()
+					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
+				}
+				if !accountAcquired {
+					releaseTurnSlots()
+					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
+				}
+				currentAccountRelease = wrapReleaseOnDone(ctx, accountRelease)
 				return nil
 			},
 			MapRequestModel: func(turn int, originalModel string) (string, error) {
@@ -2730,7 +2817,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if turn > 1 && !mappedModelUnchanged && !account.IsModelSupported(model) && !account.IsModelSupported(mapping.MappedModel) {
 					return "", newOpenAIWSUnsupportedModelSwitchError(mapping.MappedModel)
 				}
-				turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: turn, mapping: mapping})
+				turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: turn, model: model, mapping: mapping})
 				return mapping.MappedModel, nil
 			},
 			BeforeTurn: func(turn int) error {
@@ -2753,31 +2840,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if turn == 1 {
 					return nil
 				}
-				// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
-				releaseTurnSlots()
-				// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
-				userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
-				if err != nil {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
-				}
-				if !userAcquired {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
-				}
-				accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
-				if err != nil {
-					if userReleaseFunc != nil {
-						userReleaseFunc()
-					}
-					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
-				}
-				if !accountAcquired {
-					if userReleaseFunc != nil {
-						userReleaseFunc()
-					}
-					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
-				}
-				currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
-				currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
 				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
@@ -3649,6 +3711,28 @@ func closeOpenAIClientWS(conn *coderws.Conn, status coderws.StatusCode, reason s
 	}
 	_ = conn.Close(status, reason)
 	_ = conn.CloseNow()
+}
+
+func writeProactiveModelRateLimitWSError(ctx context.Context, conn *coderws.Conn, code, errorType, message string, retryAfter int) {
+	if conn == nil {
+		return
+	}
+	errorBody := map[string]any{
+		"type":    errorType,
+		"code":    code,
+		"param":   "model",
+		"message": message,
+	}
+	if retryAfter > 0 {
+		errorBody["retry_after_seconds"] = retryAfter
+	}
+	payload, err := json.Marshal(map[string]any{"type": "error", "error": errorBody})
+	if err != nil {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_ = conn.Write(writeCtx, coderws.MessageText, payload)
 }
 
 func openAIWSNextAttemptMessage(current, retryPayload []byte, retryCurrentTurn bool) ([]byte, bool) {
