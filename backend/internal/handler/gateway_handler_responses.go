@@ -154,6 +154,13 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		h.responsesErrorResponse(c, status, code, message)
 		return
 	}
+	modelRelease, admitted := admitProactiveModelRateLimit(c, h.concurrencyHelper.modelRateLimiter, subject.UserID, reqModel)
+	if !admitted {
+		return
+	}
+	if modelRelease != nil {
+		defer modelRelease()
+	}
 
 	// Parse request for session hash
 	bodyRef := service.NewRequestBodyRef(body)

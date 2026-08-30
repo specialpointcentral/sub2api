@@ -42,6 +42,36 @@ func (h *BatchImageHandler) Submit(c *gin.Context) {
 	if !h.checkSecurityAuditBeforeSubmit(c, &req) {
 		return
 	}
+	if h.openAI != nil && h.openAI.concurrencyHelper != nil && h.openAI.billingCacheService != nil {
+		apiKey, apiKeyOK := middleware.GetAPIKeyFromContext(c)
+		subject, subjectOK := middleware.GetAuthSubjectFromContext(c)
+		if !apiKeyOK || !subjectOK {
+			batchImageError(c, infraerrors.New(http.StatusServiceUnavailable, "RATE_LIMIT_SERVICE_UNAVAILABLE", "rate limit service unavailable"))
+			return
+		}
+		streamStarted := false
+		userRelease, err := h.openAI.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, false, &streamStarted)
+		if err != nil {
+			batchImageError(c, err)
+			return
+		}
+		userRelease = wrapReleaseOnDone(c.Request.Context(), userRelease)
+		if userRelease != nil {
+			defer userRelease()
+		}
+		subscription, _ := middleware.GetSubscriptionFromContext(c)
+		if err := h.openAI.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			batchImageError(c, err)
+			return
+		}
+		modelRelease, admitted := admitProactiveModelRateLimit(c, h.openAI.concurrencyHelper.modelRateLimiter, subject.UserID, req.Model)
+		if !admitted {
+			return
+		}
+		if modelRelease != nil {
+			defer modelRelease()
+		}
+	}
 	if sessionID := service.ExtractClientSessionID(c); sessionID != "" {
 		req.SessionID = &sessionID
 	}

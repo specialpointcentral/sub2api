@@ -203,4 +203,33 @@ describe('UsageProgressBar', () => {
     expect(percent.classes()).toContain('w-[32px]')
     expect(percent.classes()).toContain('text-right')
   })
+
+  it('valueText replaces the percentage while the default display remains unchanged', async () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: 'RPM',
+        utilization: 50,
+        color: 'purple'
+      }
+    })
+
+    expect(wrapper.text()).toContain('50%')
+
+    await wrapper.setProps({ valueText: '4/8' })
+
+    expect(wrapper.text()).toContain('4/8')
+    expect(wrapper.text()).not.toContain('50%')
+  })
+
+  it('does not reserve saturation warning space unless requested', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: 'RPM',
+        utilization: 50,
+        color: 'purple'
+      }
+    })
+
+    expect(wrapper.find('[data-test="saturation-warning-slot"]').exists()).toBe(false)
+  })
 })

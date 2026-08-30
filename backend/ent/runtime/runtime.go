@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/modelratelimitrule"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
@@ -1285,6 +1286,73 @@ func init() {
 	identityadoptiondecisionDescDecidedAt := identityadoptiondecisionFields[4].Descriptor()
 	// identityadoptiondecision.DefaultDecidedAt holds the default value on creation for the decided_at field.
 	identityadoptiondecision.DefaultDecidedAt = identityadoptiondecisionDescDecidedAt.Default.(func() time.Time)
+	modelratelimitruleMixin := schema.ModelRateLimitRule{}.Mixin()
+	modelratelimitruleMixinFields0 := modelratelimitruleMixin[0].Fields()
+	_ = modelratelimitruleMixinFields0
+	modelratelimitruleFields := schema.ModelRateLimitRule{}.Fields()
+	_ = modelratelimitruleFields
+	// modelratelimitruleDescCreatedAt is the schema descriptor for created_at field.
+	modelratelimitruleDescCreatedAt := modelratelimitruleMixinFields0[0].Descriptor()
+	// modelratelimitrule.DefaultCreatedAt holds the default value on creation for the created_at field.
+	modelratelimitrule.DefaultCreatedAt = modelratelimitruleDescCreatedAt.Default.(func() time.Time)
+	// modelratelimitruleDescUpdatedAt is the schema descriptor for updated_at field.
+	modelratelimitruleDescUpdatedAt := modelratelimitruleMixinFields0[1].Descriptor()
+	// modelratelimitrule.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	modelratelimitrule.DefaultUpdatedAt = modelratelimitruleDescUpdatedAt.Default.(func() time.Time)
+	// modelratelimitrule.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	modelratelimitrule.UpdateDefaultUpdatedAt = modelratelimitruleDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// modelratelimitruleDescModelPattern is the schema descriptor for model_pattern field.
+	modelratelimitruleDescModelPattern := modelratelimitruleFields[1].Descriptor()
+	// modelratelimitrule.ModelPatternValidator is a validator for the "model_pattern" field. It is called by the builders before save.
+	modelratelimitrule.ModelPatternValidator = func() func(string) error {
+		validators := modelratelimitruleDescModelPattern.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(model_pattern string) error {
+			for _, fn := range fns {
+				if err := fn(model_pattern); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// modelratelimitruleDescNormalizedPattern is the schema descriptor for normalized_pattern field.
+	modelratelimitruleDescNormalizedPattern := modelratelimitruleFields[2].Descriptor()
+	// modelratelimitrule.NormalizedPatternValidator is a validator for the "normalized_pattern" field. It is called by the builders before save.
+	modelratelimitrule.NormalizedPatternValidator = func() func(string) error {
+		validators := modelratelimitruleDescNormalizedPattern.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(normalized_pattern string) error {
+			for _, fn := range fns {
+				if err := fn(normalized_pattern); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// modelratelimitruleDescConcurrencyLimit is the schema descriptor for concurrency_limit field.
+	modelratelimitruleDescConcurrencyLimit := modelratelimitruleFields[3].Descriptor()
+	// modelratelimitrule.DefaultConcurrencyLimit holds the default value on creation for the concurrency_limit field.
+	modelratelimitrule.DefaultConcurrencyLimit = modelratelimitruleDescConcurrencyLimit.Default.(int)
+	// modelratelimitrule.ConcurrencyLimitValidator is a validator for the "concurrency_limit" field. It is called by the builders before save.
+	modelratelimitrule.ConcurrencyLimitValidator = modelratelimitruleDescConcurrencyLimit.Validators[0].(func(int) error)
+	// modelratelimitruleDescRpmLimit is the schema descriptor for rpm_limit field.
+	modelratelimitruleDescRpmLimit := modelratelimitruleFields[4].Descriptor()
+	// modelratelimitrule.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
+	modelratelimitrule.DefaultRpmLimit = modelratelimitruleDescRpmLimit.Default.(int)
+	// modelratelimitrule.RpmLimitValidator is a validator for the "rpm_limit" field. It is called by the builders before save.
+	modelratelimitrule.RpmLimitValidator = modelratelimitruleDescRpmLimit.Validators[0].(func(int) error)
+	// modelratelimitruleDescTpmLimit is the schema descriptor for tpm_limit field.
+	modelratelimitruleDescTpmLimit := modelratelimitruleFields[5].Descriptor()
+	// modelratelimitrule.TpmLimitValidator is a validator for the "tpm_limit" field. It is called by the builders before save.
+	modelratelimitrule.TpmLimitValidator = modelratelimitruleDescTpmLimit.Validators[0].(func(int) error)
 	paymentauditlogFields := schema.PaymentAuditLog{}.Fields()
 	_ = paymentauditlogFields
 	// paymentauditlogDescOrderID is the schema descriptor for order_id field.
