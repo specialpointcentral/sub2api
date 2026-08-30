@@ -26,7 +26,26 @@
     </div>
 
     <!-- Progress bar row -->
-    <div class="flex items-center gap-1">
+    <div data-test="usage-progress-row" class="flex items-center gap-1">
+      <span
+        v-if="reserveWarningSpace"
+        data-test="saturation-warning-slot"
+        class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+      >
+        <svg
+          v-if="saturated"
+          data-test="saturation-warning"
+          class="h-3.5 w-3.5 text-red-600 dark:text-red-400"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="1.5"
+          aria-hidden="true"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+        </svg>
+      </span>
+
       <!-- Label badge (fixed width for alignment) -->
       <span
         :class="['w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium', labelClass]"
@@ -44,7 +63,7 @@
 
       <!-- Percentage -->
       <span :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
-        {{ displayPercent }}
+        {{ valueText ?? displayPercent }}
       </span>
 
       <!-- Reset time -->
@@ -70,6 +89,12 @@ const props = defineProps<{
   windowStats?: WindowStats | null
   showNowWhenIdle?: boolean
   remainingCapacity?: boolean
+  warningAt?: number
+  dangerAbove?: number
+  unavailable?: boolean
+  valueText?: string
+  saturated?: boolean
+  reserveWarningSpace?: boolean
 }>()
 
 const { t } = useI18n()
@@ -110,6 +135,7 @@ const labelClass = computed(() => {
 
 // Progress bar color based on utilization
 const barClass = computed(() => {
+	if (props.unavailable) return 'bg-gray-400 dark:bg-gray-500'
   if (props.remainingCapacity) {
     if (props.utilization <= 20) {
       return 'bg-red-500'
@@ -118,7 +144,11 @@ const barClass = computed(() => {
     }
     return 'bg-green-500'
   }
-  if (props.utilization >= 100) {
+  if (props.dangerAbove != null && props.utilization > props.dangerAbove) {
+	return 'bg-red-500'
+	} else if (props.warningAt != null && props.utilization >= props.warningAt) {
+	return 'bg-amber-500'
+	} else if (props.utilization >= 100) {
     return 'bg-red-500'
   } else if (props.utilization >= 80) {
     return 'bg-amber-500'
@@ -129,6 +159,7 @@ const barClass = computed(() => {
 
 // Text color based on utilization
 const textClass = computed(() => {
+	if (props.unavailable) return 'text-gray-400 dark:text-gray-500'
   if (props.remainingCapacity) {
     if (props.utilization <= 20) {
       return 'text-red-600 dark:text-red-400'
@@ -137,7 +168,11 @@ const textClass = computed(() => {
     }
     return 'text-gray-600 dark:text-gray-400'
   }
-  if (props.utilization >= 100) {
+  if (props.dangerAbove != null && props.utilization > props.dangerAbove) {
+	return 'text-red-600 dark:text-red-400'
+	} else if (props.warningAt != null && props.utilization >= props.warningAt) {
+	return 'text-amber-600 dark:text-amber-400'
+	} else if (props.utilization >= 100) {
     return 'text-red-600 dark:text-red-400'
   } else if (props.utilization >= 80) {
     return 'text-amber-600 dark:text-amber-400'
@@ -148,11 +183,13 @@ const textClass = computed(() => {
 
 // Bar width (capped at 100%)
 const barWidth = computed(() => {
+	if (props.unavailable) return '0%'
   return `${Math.min(Math.max(props.utilization, 0), 100)}%`
 })
 
 // Display percentage (cap at 999% for readability)
 const displayPercent = computed(() => {
+	if (props.unavailable) return '—'
   const percent = Math.round(
     props.remainingCapacity
       ? Math.min(Math.max(props.utilization, 0), 100)
