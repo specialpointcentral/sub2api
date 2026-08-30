@@ -37,29 +37,29 @@
       <div data-test="overall-limits">
         <h3 class="mb-1.5 font-semibold text-gray-900 dark:text-white">{{ t('modelRateLimits.overallHeading') }}</h3>
         <div class="space-y-1.5">
-          <div data-test="usage-progress" class="flex items-center gap-1">
-            <span class="w-[32px] shrink-0 rounded bg-indigo-100 px-1 text-center text-[10px] font-medium text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
-              {{ t('modelRateLimits.concurrency') }}
-            </span>
-            <span class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-              <span
-                class="block h-full transition-all duration-300"
-                :class="usageBarClass(currentSnapshot.overall_concurrency)"
-                :style="{ width: usageBarWidth(currentSnapshot.overall_concurrency) }"
-              />
-            </span>
+          <div data-test="usage-progress">
+            <UsageProgressBar
+              :label="t('modelRateLimits.concurrency')"
+              :utilization="currentSnapshot.overall_concurrency.utilization ?? 0"
+              :color="'indigo'"
+              :warning-at="70"
+              :danger-above="90"
+              :unavailable="!currentSnapshot.usage_available"
+              :value-text="usageText(currentSnapshot.overall_concurrency)"
+              :saturated="currentSnapshot.overall_concurrency.saturated"
+            />
           </div>
-          <div v-if="currentSnapshot.overall_rpm" data-test="usage-progress" class="flex items-center gap-1">
-            <span class="w-[32px] shrink-0 rounded bg-purple-100 px-1 text-center text-[10px] font-medium text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
-              RPM
-            </span>
-            <span class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-              <span
-                class="block h-full transition-all duration-300"
-                :class="usageBarClass(currentSnapshot.overall_rpm)"
-                :style="{ width: usageBarWidth(currentSnapshot.overall_rpm) }"
-              />
-            </span>
+          <div v-if="currentSnapshot.overall_rpm" data-test="usage-progress">
+            <UsageProgressBar
+              :label="'RPM'"
+              :utilization="currentSnapshot.overall_rpm.utilization ?? 0"
+              :color="'purple'"
+              :warning-at="70"
+              :danger-above="90"
+              :unavailable="!currentSnapshot.usage_available"
+              :value-text="usageText(currentSnapshot.overall_rpm)"
+              :saturated="currentSnapshot.overall_rpm.saturated"
+            />
           </div>
         </div>
       </div>
@@ -83,6 +83,7 @@
                   :danger-above="90"
                   :unavailable="!currentSnapshot.usage_available"
                   :value-text="usageText(model.dimensions.concurrency)"
+                  :saturated="model.dimensions.concurrency.saturated"
                 />
               </div>
               <div v-if="model.dimensions.rpm?.limit != null" data-test="usage-progress">
@@ -94,6 +95,7 @@
                   :danger-above="90"
                   :unavailable="!currentSnapshot.usage_available"
                   :value-text="usageText(model.dimensions.rpm)"
+                  :saturated="model.dimensions.rpm.saturated"
                 />
               </div>
               <div v-if="model.dimensions.tpm?.limit != null" data-test="usage-progress">
@@ -105,6 +107,7 @@
                   :danger-above="90"
                   :unavailable="!currentSnapshot.usage_available"
                   :value-text="usageText(model.dimensions.tpm)"
+                  :saturated="model.dimensions.tpm.saturated"
                 />
               </div>
             </div>
@@ -112,16 +115,6 @@
         </div>
       </div>
 
-      <div v-if="currentSnapshot.saturated.length" class="mt-2 border-t border-gray-100 pt-2 dark:border-dark-700">
-        <div
-          v-for="item in currentSnapshot.saturated"
-          :key="`${item.model}:${item.dimension}`"
-          data-test="saturated-item"
-          class="text-[10px] text-red-600 dark:text-red-300"
-        >
-          {{ item.model || t('modelRateLimits.overall') }} · {{ dimensionLabel(item.dimension) }} · {{ t('modelRateLimits.reached') }}
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -208,19 +201,6 @@ function usageText(usage: ModelRateLimitUsage) {
   const used = usage.used == null ? '—' : usage.used
   const limit = usage.limit == null ? '∞' : usage.limit
   return `${used}/${limit}`
-}
-
-function usageBarWidth(usage: ModelRateLimitUsage) {
-  if (!currentSnapshot.value?.usage_available) return '0%'
-  if (usage.limit == null) return '35%'
-  return `${Math.min(100, Math.max(0, usage.utilization ?? 0))}%`
-}
-
-function usageBarClass(usage: ModelRateLimitUsage) {
-  if (!currentSnapshot.value?.usage_available || usage.limit == null) return 'bg-gray-400 dark:bg-gray-500'
-  if ((usage.utilization ?? 0) > 90) return 'bg-red-500'
-  if ((usage.utilization ?? 0) >= 70) return 'bg-amber-500'
-  return 'bg-green-500'
 }
 
 function dimensionLabel(dimension: 'concurrency' | 'rpm' | 'tpm') {

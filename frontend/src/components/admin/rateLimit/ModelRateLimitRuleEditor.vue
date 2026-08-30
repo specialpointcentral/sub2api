@@ -27,9 +27,6 @@
           <p v-if="rowErrors[index]?.pattern" class="mt-1 text-xs text-red-600">
             {{ rowErrors[index].pattern }}
           </p>
-          <p v-else-if="isUnlimited(row)" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
-            {{ t('admin.modelRateLimits.explicitUnlimited') }}
-          </p>
         </div>
         <div class="w-32 shrink-0">
           <input
@@ -212,10 +209,6 @@ function addRow() {
 function removeRow(index: number) {
   rows.value.splice(index, 1)
   emitRows()
-}
-
-function isUnlimited(row: EditableRow) {
-  return normalizeLimit(row.concurrency) === 0 && normalizeLimit(row.rpm) === 0
 }
 
 function save() {

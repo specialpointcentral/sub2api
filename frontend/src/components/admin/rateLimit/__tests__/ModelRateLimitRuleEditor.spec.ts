@@ -58,7 +58,7 @@ describe('ModelRateLimitRuleEditor', () => {
     expect(wrapper.emitted('save')?.length ?? 0).toBe(saveCount)
 
 	await patterns[1].setValue('custom-*')
-		expect(wrapper.text()).toContain('admin.modelRateLimits.explicitUnlimited')
+		expect(wrapper.text()).not.toContain('admin.modelRateLimits.explicitUnlimited')
 		const concurrency = wrapper.findAll('[data-test="concurrency-limit"]')
     await concurrency[1].setValue('-1')
     expect(wrapper.text()).toContain('admin.modelRateLimits.errors.nonNegativeInteger')
