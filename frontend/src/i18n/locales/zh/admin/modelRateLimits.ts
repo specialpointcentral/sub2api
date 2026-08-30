@@ -1,0 +1,25 @@
+export default {
+  modelRateLimits: {
+    globalTitle: '按模型用户限流',
+    globalDescription: '为每个用户的客户端可见模型设置默认限制；空表表示关闭这一层限流。新规则不会追溯计入已经在途的请求。',
+    userTitle: '按模型限制',
+    userDescription: '用户规则会整行替换所匹配的全局规则。',
+    menuItem: '按模型限制',
+    model: '模型或模式',
+    concurrency: '并发',
+    rpm: 'RPM',
+    patternPlaceholder: 'gpt-5.6-* 或具体模型',
+    empty: '暂无规则，此作用域的按模型限流已关闭。',
+    addRule: '添加规则',
+    explicitUnlimited: '该模式的显式无限制 / 豁免规则',
+    saved: '按模型限制已保存',
+    loadFailed: '加载按模型限制失败',
+    saveFailed: '保存按模型限制失败',
+    errors: {
+      required: '模型模式不能为空',
+      glob: '仅支持 * 通配符',
+      duplicate: '模型模式重复',
+      nonNegativeInteger: '请输入非负整数',
+    },
+  },
+}

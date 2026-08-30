@@ -213,22 +213,24 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			model = "gpt-live"
 		}
 		record := &LiveCallRecord{
-			CallID:                created.CallID,
-			CallHash:              hashLiveCallID(created.CallID),
-			AccountID:             account.ID,
-			APIKeyID:              identity.APIKeyID,
-			UserID:                identity.UserID,
-			GroupID:               liveGroupID(identity.GroupID),
-			SubscriptionID:        liveGroupID(identity.SubscriptionID),
-			LeaseID:               leaseID,
-			Model:                 model,
-			CreatedAt:             now,
-			ExpiresAt:             now.Add(s.liveMaxSessionDuration()),
-			Controller:            LiveControllerPending,
-			UserAgent:             identity.UserAgent,
-			IPAddress:             identity.IPAddress,
-			InboundEndpoint:       identity.InboundEndpoint,
-			AttestationCiphertext: attestationCiphertext,
+			CallID:                       created.CallID,
+			CallHash:                     hashLiveCallID(created.CallID),
+			AccountID:                    account.ID,
+			APIKeyID:                     identity.APIKeyID,
+			UserID:                       identity.UserID,
+			GroupID:                      liveGroupID(identity.GroupID),
+			SubscriptionID:               liveGroupID(identity.SubscriptionID),
+			LeaseID:                      leaseID,
+			ModelRateLimitEffectiveModel: identity.ModelRateLimitEffectiveModel,
+			ModelRateLimitRequestID:      identity.ModelRateLimitRequestID,
+			Model:                        model,
+			CreatedAt:                    now,
+			ExpiresAt:                    now.Add(s.liveMaxSessionDuration()),
+			Controller:                   LiveControllerPending,
+			UserAgent:                    identity.UserAgent,
+			IPAddress:                    identity.IPAddress,
+			InboundEndpoint:              identity.InboundEndpoint,
+			AttestationCiphertext:        attestationCiphertext,
 		}
 		mappingTTL := s.liveMaxSessionDuration() + 5*time.Minute
 		if saveErr := store.SaveLiveCall(ctx, record, mappingTTL); saveErr != nil {
@@ -788,6 +790,13 @@ func (s *OpenAIGatewayService) refreshLiveLease(record *LiveCallRecord) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
 	defer cancel()
 	refreshed, err := cache.RefreshLiveLease(ctx, record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
+	if err != nil || !refreshed {
+		return false
+	}
+	if record.ModelRateLimitRequestID == "" || s.modelRateLimitCounters == nil {
+		return true
+	}
+	refreshed, err = s.modelRateLimitCounters.RefreshModelRateLimitConcurrency(ctx, record.UserID, record.ModelRateLimitEffectiveModel, record.ModelRateLimitRequestID)
 	return err == nil && refreshed
 }
 
@@ -816,6 +825,11 @@ func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
 		return
 	}
 	s.releaseLiveLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
+	if record.ModelRateLimitRequestID != "" && s.modelRateLimitCounters != nil {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
+		_ = s.modelRateLimitCounters.ReleaseModelRateLimit(releaseCtx, record.UserID, record.ModelRateLimitEffectiveModel, record.ModelRateLimitRequestID)
+		releaseCancel()
+	}
 	if s.usageLogRepo == nil {
 		return
 	}

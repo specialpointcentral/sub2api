@@ -1699,6 +1699,29 @@ func HasPlatformQuotasWith(preds ...predicate.UserPlatformQuota) predicate.User 
 	})
 }
 
+// HasModelRateLimitRules applies the HasEdge predicate on the "model_rate_limit_rules" edge.
+func HasModelRateLimitRules() predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, ModelRateLimitRulesTable, ModelRateLimitRulesColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasModelRateLimitRulesWith applies the HasEdge predicate on the "model_rate_limit_rules" edge with a given conditions (other predicates).
+func HasModelRateLimitRulesWith(preds ...predicate.ModelRateLimitRule) predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := newModelRateLimitRulesStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
 // HasUserAllowedGroups applies the HasEdge predicate on the "user_allowed_groups" edge.
 func HasUserAllowedGroups() predicate.User {
 	return predicate.User(func(s *sql.Selector) {

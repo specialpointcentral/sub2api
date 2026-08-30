@@ -70,6 +70,9 @@ const props = defineProps<{
   windowStats?: WindowStats | null
   showNowWhenIdle?: boolean
   remainingCapacity?: boolean
+	warningAt?: number
+  dangerAbove?: number
+	unavailable?: boolean
 }>()
 
 const { t } = useI18n()
@@ -110,6 +113,7 @@ const labelClass = computed(() => {
 
 // Progress bar color based on utilization
 const barClass = computed(() => {
+	if (props.unavailable) return 'bg-gray-400 dark:bg-gray-500'
   if (props.remainingCapacity) {
     if (props.utilization <= 20) {
       return 'bg-red-500'
@@ -118,7 +122,11 @@ const barClass = computed(() => {
     }
     return 'bg-green-500'
   }
-  if (props.utilization >= 100) {
+  if (props.dangerAbove != null && props.utilization > props.dangerAbove) {
+	return 'bg-red-500'
+	} else if (props.warningAt != null && props.utilization >= props.warningAt) {
+	return 'bg-amber-500'
+	} else if (props.utilization >= 100) {
     return 'bg-red-500'
   } else if (props.utilization >= 80) {
     return 'bg-amber-500'
@@ -129,6 +137,7 @@ const barClass = computed(() => {
 
 // Text color based on utilization
 const textClass = computed(() => {
+	if (props.unavailable) return 'text-gray-400 dark:text-gray-500'
   if (props.remainingCapacity) {
     if (props.utilization <= 20) {
       return 'text-red-600 dark:text-red-400'
@@ -137,7 +146,11 @@ const textClass = computed(() => {
     }
     return 'text-gray-600 dark:text-gray-400'
   }
-  if (props.utilization >= 100) {
+  if (props.dangerAbove != null && props.utilization > props.dangerAbove) {
+	return 'text-red-600 dark:text-red-400'
+	} else if (props.warningAt != null && props.utilization >= props.warningAt) {
+	return 'text-amber-600 dark:text-amber-400'
+	} else if (props.utilization >= 100) {
     return 'text-red-600 dark:text-red-400'
   } else if (props.utilization >= 80) {
     return 'text-amber-600 dark:text-amber-400'
@@ -148,11 +161,13 @@ const textClass = computed(() => {
 
 // Bar width (capped at 100%)
 const barWidth = computed(() => {
+	if (props.unavailable) return '0%'
   return `${Math.min(Math.max(props.utilization, 0), 100)}%`
 })
 
 // Display percentage (cap at 999% for readability)
 const displayPercent = computed(() => {
+	if (props.unavailable) return '—'
   const percent = Math.round(
     props.remainingCapacity
       ? Math.min(Math.max(props.utilization, 0), 100)
