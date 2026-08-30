@@ -54,6 +54,12 @@
         <!-- Subscription Progress (for users with active subscriptions) -->
         <SubscriptionProgressMini v-if="user" />
 
+		<ModelLimitWidget
+		  v-if="user"
+		  class="hidden sm:block"
+		  @update:snapshot="headerModelLimitSnapshot = $event"
+		/>
+
         <!-- Balance Display -->
         <div
           v-if="user"
@@ -140,6 +146,10 @@
               </div>
 
               <!-- Balance (mobile only) -->
+			  <div class="border-b border-gray-100 px-2 py-2 dark:border-dark-700 sm:hidden">
+				<ModelLimitWidget :snapshot="headerModelLimitSnapshot" :poll="false" compact />
+			  </div>
+
               <div class="border-b border-gray-100 px-4 py-2 dark:border-dark-700 sm:hidden">
                 <div class="text-xs text-gray-500 dark:text-dark-400">
                   {{ t('common.balance') }}
@@ -257,6 +267,8 @@ import { useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
+import ModelLimitWidget from '@/components/layout/ModelLimitWidget.vue'
+import type { ModelRateLimitSnapshot } from '@/api/modelRateLimits'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
@@ -273,6 +285,7 @@ const onboardingStore = useOnboardingStore()
 const user = computed(() => authStore.user)
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
+const headerModelLimitSnapshot = ref<ModelRateLimitSnapshot>()
 const contactInfo = computed(() => appStore.contactInfo)
 const docUrl = computed(() => sanitizeUrl(appStore.docUrl))
 const modelPlazaEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.modelPlaza))

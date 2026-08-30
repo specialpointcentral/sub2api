@@ -1096,6 +1096,44 @@ var (
 			},
 		},
 	}
+	// ModelRateLimitRulesColumns holds the columns for the "model_rate_limit_rules" table.
+	ModelRateLimitRulesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "model_pattern", Type: field.TypeString, Size: 255},
+		{Name: "normalized_pattern", Type: field.TypeString, Size: 255},
+		{Name: "concurrency_limit", Type: field.TypeInt, Default: 0},
+		{Name: "rpm_limit", Type: field.TypeInt, Default: 0},
+		{Name: "tpm_limit", Type: field.TypeInt, Nullable: true},
+		{Name: "user_id", Type: field.TypeInt64, Nullable: true},
+	}
+	// ModelRateLimitRulesTable holds the schema information for the "model_rate_limit_rules" table.
+	ModelRateLimitRulesTable = &schema.Table{
+		Name:       "model_rate_limit_rules",
+		Columns:    ModelRateLimitRulesColumns,
+		PrimaryKey: []*schema.Column{ModelRateLimitRulesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "model_rate_limit_rules_users_model_rate_limit_rules",
+				Columns:    []*schema.Column{ModelRateLimitRulesColumns[8]},
+				RefColumns: []*schema.Column{UsersColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "modelratelimitrule_user_id",
+				Unique:  false,
+				Columns: []*schema.Column{ModelRateLimitRulesColumns[8]},
+			},
+			{
+				Name:    "modelratelimitrule_normalized_pattern",
+				Unique:  false,
+				Columns: []*schema.Column{ModelRateLimitRulesColumns[4]},
+			},
+		},
+	}
 	// PaymentAuditLogsColumns holds the columns for the "payment_audit_logs" table.
 	PaymentAuditLogsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -2106,6 +2144,7 @@ var (
 		GroupsTable,
 		IdempotencyRecordsTable,
 		IdentityAdoptionDecisionsTable,
+		ModelRateLimitRulesTable,
 		PaymentAuditLogsTable,
 		PaymentOrdersTable,
 		PaymentProviderInstancesTable,
@@ -2202,6 +2241,10 @@ func init() {
 	IdentityAdoptionDecisionsTable.ForeignKeys[1].RefTable = PendingAuthSessionsTable
 	IdentityAdoptionDecisionsTable.Annotation = &entsql.Annotation{
 		Table: "identity_adoption_decisions",
+	}
+	ModelRateLimitRulesTable.ForeignKeys[0].RefTable = UsersTable
+	ModelRateLimitRulesTable.Annotation = &entsql.Annotation{
+		Table: "model_rate_limit_rules",
 	}
 	PaymentAuditLogsTable.Annotation = &entsql.Annotation{
 		Table: "payment_audit_logs",
