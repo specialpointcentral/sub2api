@@ -146,4 +146,21 @@ describe('UsageProgressBar', () => {
     expect(wrapper.get('.h-1\\.5 > div').attributes('style')).toContain('width: 100%')
     expect(wrapper.get('.h-1\\.5 > div').classes()).toContain('bg-red-500')
   })
+
+  it('valueText replaces the percentage while the default display remains unchanged', async () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: 'RPM',
+        utilization: 50,
+        color: 'purple'
+      }
+    })
+
+    expect(wrapper.text()).toContain('50%')
+
+    await wrapper.setProps({ valueText: '4/8' })
+
+    expect(wrapper.text()).toContain('4/8')
+    expect(wrapper.text()).not.toContain('50%')
+  })
 })

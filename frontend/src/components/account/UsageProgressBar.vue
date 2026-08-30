@@ -44,7 +44,7 @@
 
       <!-- Percentage -->
       <span :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
-        {{ displayPercent }}
+        {{ valueText ?? displayPercent }}
       </span>
 
       <!-- Reset time -->
@@ -70,9 +70,10 @@ const props = defineProps<{
   windowStats?: WindowStats | null
   showNowWhenIdle?: boolean
   remainingCapacity?: boolean
-	warningAt?: number
+  warningAt?: number
   dangerAbove?: number
-	unavailable?: boolean
+  unavailable?: boolean
+  valueText?: string
 }>()
 
 const { t } = useI18n()

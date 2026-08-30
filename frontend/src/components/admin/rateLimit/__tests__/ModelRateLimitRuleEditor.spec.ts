@@ -18,8 +18,25 @@ describe('ModelRateLimitRuleEditor', () => {
       },
     })
 
-    await wrapper.get('[data-test="add-rule"]').trigger('click')
+    const addRule = wrapper.get('[data-test="add-rule"]')
+    expect(addRule.classes()).toEqual(expect.arrayContaining([
+      'w-full',
+      'border-2',
+      'border-dashed',
+      'border-gray-300',
+    ]))
+    expect(addRule.get('svg path').attributes('d')).toBe('M12 4v16m8-8H4')
+
+    await addRule.trigger('click')
     expect(wrapper.findAll('[data-test="rule-row"]')).toHaveLength(1)
+    const deleteRule = wrapper.get('[data-test="delete-rule"]')
+    expect(deleteRule.classes()).toEqual(expect.arrayContaining([
+      'rounded-lg',
+      'p-2',
+      'text-red-500',
+      'transition-colors',
+    ]))
+    expect(deleteRule.get('svg path').attributes('d')).toBe('M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16')
 	const firstPattern = wrapper.get('[data-test="model-pattern"]')
 	;(firstPattern.element as HTMLInputElement).focus()
 	await firstPattern.setValue('claude-opus-4-1')
