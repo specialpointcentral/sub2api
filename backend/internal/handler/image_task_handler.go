@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,8 +100,56 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	if !h.checkSecurityAuditBeforeSubmit(c, apiKey, platform, body) {
 		return
 	}
+	handedOff := false
+	preAdmitted := false
+	var userRelease, modelRelease func()
+	defer func() {
+		if !handedOff {
+			if modelRelease != nil {
+				modelRelease()
+			}
+			if userRelease != nil {
+				userRelease()
+			}
+		}
+	}()
+	if h.openAI != nil && h.openAI.gatewayService != nil && h.openAI.concurrencyHelper != nil && h.openAI.billingCacheService != nil {
+		subject, subjectOK := middleware2.GetAuthSubjectFromContext(c)
+		if !subjectOK {
+			imageTaskJSONError(c, http.StatusInternalServerError, "api_error", "User context not found")
+			return
+		}
+		model, modelErr := h.requestedModel(c, platform, body)
+		if modelErr != nil {
+			imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", modelErr.Error())
+			return
+		}
+		streamStarted := false
+		userRelease, err = h.openAI.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, false, &streamStarted)
+		if err != nil {
+			imageTaskJSONError(c, http.StatusTooManyRequests, "rate_limit_error", err.Error())
+			return
+		}
+		subscription, _ := middleware2.GetSubscriptionFromContext(c)
+		if err := h.openAI.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			imageTaskJSONError(c, status, code, message)
+			return
+		}
+		modelRelease, subjectOK = admitProactiveModelRateLimitRaw(c, h.openAI.concurrencyHelper.modelRateLimiter, subject.UserID, model)
+		if !subjectOK {
+			return
+		}
+		preAdmitted = true
+	}
 
 	taskCtx, recorder, cancel := newAsyncImageContext(c, body, h.tasks.ExecutionTimeout())
+	if preAdmitted {
+		taskCtx.Set(proactiveModelRateLimitPreAdmittedKey, true)
+	}
 	task, err := h.tasks.Create(c.Request.Context(), service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID})
 	if err != nil {
 		cancel()
@@ -122,7 +171,30 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		"poll_url":   pollURL,
 	})
 
-	go h.run(task.ID, platform, taskCtx, recorder, cancel)
+	handedOff = true
+	go h.run(task.ID, platform, taskCtx, recorder, cancel, func() {
+		if modelRelease != nil {
+			modelRelease()
+		}
+		if userRelease != nil {
+			userRelease()
+		}
+	})
+}
+
+func (h *AsyncImageHandler) requestedModel(c *gin.Context, platform string, body []byte) (string, error) {
+	if platform == service.PlatformGrok {
+		model := strings.TrimSpace(service.ParseGrokMediaRequest(c.GetHeader("Content-Type"), body).Model)
+		if model == "" {
+			return "", errors.New("model is required")
+		}
+		return model, nil
+	}
+	parsed, err := h.openAI.gatewayService.ParseOpenAIImagesRequest(c, body)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(parsed.Model), nil
 }
 
 func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, apiKey *service.APIKey, platform string, body []byte) bool {
@@ -220,8 +292,9 @@ func (h *AsyncImageHandler) executeWithGateway(platform string, c *gin.Context) 
 	h.openAI.Images(c)
 }
 
-func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, recorder *httptest.ResponseRecorder, cancel context.CancelFunc) {
+func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, recorder *httptest.ResponseRecorder, cancel context.CancelFunc, releaseAdmission func()) {
 	defer cancel()
+	defer releaseAdmission()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			logger.L().Error("image_task.execution_panicked", zap.String("task_id", taskID), zap.Any("panic", recovered))

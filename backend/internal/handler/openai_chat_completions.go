@@ -146,6 +146,13 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+	modelRelease, admitted := admitProactiveModelRateLimit(c, h.concurrencyHelper.modelRateLimiter, subject.UserID, reqModel)
+	if !admitted {
+		return
+	}
+	if modelRelease != nil {
+		defer modelRelease()
+	}
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)

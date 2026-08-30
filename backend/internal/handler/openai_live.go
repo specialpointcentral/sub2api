@@ -44,6 +44,9 @@ func (h *OpenAIGatewayHandler) Live(c *gin.Context) {
 		return
 	}
 	model := strings.TrimSpace(gjson.GetBytes(request.Session, "model").String())
+	if model == "" {
+		model = "gpt-live"
+	}
 	if !compositeTargetPlatformAllowed(c, apiKey, model, service.PlatformOpenAI) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Live only supports OpenAI models for Composite groups")
 		return
@@ -111,12 +114,28 @@ func (h *OpenAIGatewayHandler) Live(c *gin.Context) {
 		return
 	}
 	defer userRelease()
+	modelRelease, modelAdmission, admitted := admitProactiveModelRateLimitRawDetailed(c, h.concurrencyHelper.modelRateLimiter, subject.UserID, model)
+	if !admitted {
+		return
+	}
+	defer func() {
+		if modelRelease != nil {
+			modelRelease()
+		}
+	}()
 
 	identity := liveCallIdentity(c, apiKey, subject.UserID, subscription)
+	if modelAdmission != nil && modelRelease != nil {
+		identity.ModelRateLimitEffectiveModel = modelAdmission.EffectiveModelKey
+		identity.ModelRateLimitRequestID = modelAdmission.RequestID
+	}
 	created, err := h.gatewayService.CreateLiveCall(c.Request.Context(), request, identity, subject.Concurrency)
 	if err != nil {
 		h.writeLiveCreateError(c, err)
 		return
+	}
+	if identity.ModelRateLimitRequestID != "" {
+		modelRelease = nil
 	}
 	c.Header("Location", liveSidebandLocation(c.FullPath(), created.CallID))
 	c.Data(http.StatusOK, "application/sdp", created.SDP)

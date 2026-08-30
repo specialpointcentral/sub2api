@@ -106,6 +106,12 @@ func normalizeKnownOpenAICodexModel(model string) string {
 	}
 }
 
+// NormalizeKnownOpenAICodexModel exposes the existing client-facing alias/base
+// normalization to policy resolvers without duplicating the suffix catalog.
+func NormalizeKnownOpenAICodexModel(model string) string {
+	return normalizeKnownOpenAICodexModel(model)
+}
+
 // isOpenAIGPT56Model 判断是否 GPT-5.6 系列模型；入参可为原始模型名
 // （含大小写/路径/后缀变体）或已归一化的基名，两者均能正确识别。
 func isOpenAIGPT56Model(model string) bool {
