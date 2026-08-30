@@ -39,6 +39,15 @@ func RegisterAdminRoutes(
 
 		// 用户管理
 		registerUserManagementRoutes(admin, h)
+		modelRateLimits := admin.Group("/model-rate-limits")
+		{
+			modelRateLimits.GET("/rules", h.ModelRateLimit.GetGlobalRules)
+			modelRateLimits.PUT("/rules", h.ModelRateLimit.PutGlobalRules)
+			modelRateLimits.GET("/model-candidates", h.ModelRateLimit.Candidates)
+			modelRateLimits.GET("/state", h.ModelRateLimit.State)
+		}
+		admin.GET("/users/:id/model-rate-limits", h.ModelRateLimit.GetUserRules)
+		admin.PUT("/users/:id/model-rate-limits", h.ModelRateLimit.PutUserRules)
 
 		// 分组管理
 		registerGroupRoutes(admin, h)

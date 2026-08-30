@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/modelratelimitrule"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
@@ -641,6 +642,21 @@ func (_u *UserUpdate) AddPlatformQuotas(v ...*UserPlatformQuota) *UserUpdate {
 	return _u.AddPlatformQuotaIDs(ids...)
 }
 
+// AddModelRateLimitRuleIDs adds the "model_rate_limit_rules" edge to the ModelRateLimitRule entity by IDs.
+func (_u *UserUpdate) AddModelRateLimitRuleIDs(ids ...int64) *UserUpdate {
+	_u.mutation.AddModelRateLimitRuleIDs(ids...)
+	return _u
+}
+
+// AddModelRateLimitRules adds the "model_rate_limit_rules" edges to the ModelRateLimitRule entity.
+func (_u *UserUpdate) AddModelRateLimitRules(v ...*ModelRateLimitRule) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddModelRateLimitRuleIDs(ids...)
+}
+
 // Mutation returns the UserMutation object of the builder.
 func (_u *UserUpdate) Mutation() *UserMutation {
 	return _u.mutation
@@ -917,6 +933,27 @@ func (_u *UserUpdate) RemovePlatformQuotas(v ...*UserPlatformQuota) *UserUpdate 
 		ids[i] = v[i].ID
 	}
 	return _u.RemovePlatformQuotaIDs(ids...)
+}
+
+// ClearModelRateLimitRules clears all "model_rate_limit_rules" edges to the ModelRateLimitRule entity.
+func (_u *UserUpdate) ClearModelRateLimitRules() *UserUpdate {
+	_u.mutation.ClearModelRateLimitRules()
+	return _u
+}
+
+// RemoveModelRateLimitRuleIDs removes the "model_rate_limit_rules" edge to ModelRateLimitRule entities by IDs.
+func (_u *UserUpdate) RemoveModelRateLimitRuleIDs(ids ...int64) *UserUpdate {
+	_u.mutation.RemoveModelRateLimitRuleIDs(ids...)
+	return _u
+}
+
+// RemoveModelRateLimitRules removes "model_rate_limit_rules" edges to ModelRateLimitRule entities.
+func (_u *UserUpdate) RemoveModelRateLimitRules(v ...*ModelRateLimitRule) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveModelRateLimitRuleIDs(ids...)
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
@@ -1713,6 +1750,51 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
+	if _u.mutation.ModelRateLimitRulesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ModelRateLimitRulesTable,
+			Columns: []string{user.ModelRateLimitRulesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(modelratelimitrule.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedModelRateLimitRulesIDs(); len(nodes) > 0 && !_u.mutation.ModelRateLimitRulesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ModelRateLimitRulesTable,
+			Columns: []string{user.ModelRateLimitRulesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(modelratelimitrule.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ModelRateLimitRulesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ModelRateLimitRulesTable,
+			Columns: []string{user.ModelRateLimitRulesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(modelratelimitrule.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{user.Label}
@@ -2334,6 +2416,21 @@ func (_u *UserUpdateOne) AddPlatformQuotas(v ...*UserPlatformQuota) *UserUpdateO
 	return _u.AddPlatformQuotaIDs(ids...)
 }
 
+// AddModelRateLimitRuleIDs adds the "model_rate_limit_rules" edge to the ModelRateLimitRule entity by IDs.
+func (_u *UserUpdateOne) AddModelRateLimitRuleIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.AddModelRateLimitRuleIDs(ids...)
+	return _u
+}
+
+// AddModelRateLimitRules adds the "model_rate_limit_rules" edges to the ModelRateLimitRule entity.
+func (_u *UserUpdateOne) AddModelRateLimitRules(v ...*ModelRateLimitRule) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddModelRateLimitRuleIDs(ids...)
+}
+
 // Mutation returns the UserMutation object of the builder.
 func (_u *UserUpdateOne) Mutation() *UserMutation {
 	return _u.mutation
@@ -2610,6 +2707,27 @@ func (_u *UserUpdateOne) RemovePlatformQuotas(v ...*UserPlatformQuota) *UserUpda
 		ids[i] = v[i].ID
 	}
 	return _u.RemovePlatformQuotaIDs(ids...)
+}
+
+// ClearModelRateLimitRules clears all "model_rate_limit_rules" edges to the ModelRateLimitRule entity.
+func (_u *UserUpdateOne) ClearModelRateLimitRules() *UserUpdateOne {
+	_u.mutation.ClearModelRateLimitRules()
+	return _u
+}
+
+// RemoveModelRateLimitRuleIDs removes the "model_rate_limit_rules" edge to ModelRateLimitRule entities by IDs.
+func (_u *UserUpdateOne) RemoveModelRateLimitRuleIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.RemoveModelRateLimitRuleIDs(ids...)
+	return _u
+}
+
+// RemoveModelRateLimitRules removes "model_rate_limit_rules" edges to ModelRateLimitRule entities.
+func (_u *UserUpdateOne) RemoveModelRateLimitRules(v ...*ModelRateLimitRule) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveModelRateLimitRuleIDs(ids...)
 }
 
 // Where appends a list predicates to the UserUpdate builder.
@@ -3429,6 +3547,51 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(userplatformquota.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.ModelRateLimitRulesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ModelRateLimitRulesTable,
+			Columns: []string{user.ModelRateLimitRulesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(modelratelimitrule.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedModelRateLimitRulesIDs(); len(nodes) > 0 && !_u.mutation.ModelRateLimitRulesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ModelRateLimitRulesTable,
+			Columns: []string{user.ModelRateLimitRulesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(modelratelimitrule.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ModelRateLimitRulesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ModelRateLimitRulesTable,
+			Columns: []string{user.ModelRateLimitRulesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(modelratelimitrule.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

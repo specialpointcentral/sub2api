@@ -46,6 +46,18 @@ function onTooltipLeave(event: MouseEvent) {
   closeTooltip()
 }
 
+function onFocusIn() {
+  if (props.trigger !== 'hover') return
+  openTooltip()
+}
+
+function onFocusOut(event: FocusEvent) {
+  if (props.trigger !== 'hover') return
+  const next = event.relatedTarget as Node | null
+  if (next && (triggerRef.value?.contains(next) || tooltipRef.value?.contains(next))) return
+  closeTooltip()
+}
+
 function onClick(event: MouseEvent) {
   if (props.trigger !== 'click') return
   event.stopPropagation()
@@ -107,6 +119,8 @@ onBeforeUnmount(() => {
     class="group relative ml-1 inline-flex items-center align-middle"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
+	@focusin="onFocusIn"
+	@focusout="onFocusOut"
     @click="onClick"
   >
     <!-- Trigger Icon -->

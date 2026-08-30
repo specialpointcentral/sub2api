@@ -242,6 +242,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// For Gemini native API, do not send Claude-style ping frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
+	geminiConcurrency.SetModelRateLimiter(h.concurrencyHelper.modelRateLimiter)
 
 	// 1) user concurrency slot
 	streamStarted := false
@@ -269,6 +270,13 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		googleError(c, status, message)
 		return
+	}
+	modelRelease, admitted := admitProactiveModelRateLimit(c, geminiConcurrency.modelRateLimiter, authSubject.UserID, reqModel)
+	if !admitted {
+		return
+	}
+	if modelRelease != nil {
+		defer modelRelease()
 	}
 
 	// 3) select account (sticky session based on request body)
