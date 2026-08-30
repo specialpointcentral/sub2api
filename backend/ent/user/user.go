@@ -91,6 +91,8 @@ const (
 	EdgePendingAuthSessions = "pending_auth_sessions"
 	// EdgePlatformQuotas holds the string denoting the platform_quotas edge name in mutations.
 	EdgePlatformQuotas = "platform_quotas"
+	// EdgeModelRateLimitRules holds the string denoting the model_rate_limit_rules edge name in mutations.
+	EdgeModelRateLimitRules = "model_rate_limit_rules"
 	// EdgeUserAllowedGroups holds the string denoting the user_allowed_groups edge name in mutations.
 	EdgeUserAllowedGroups = "user_allowed_groups"
 	// Table holds the table name of the user in the database.
@@ -184,6 +186,13 @@ const (
 	PlatformQuotasInverseTable = "user_platform_quotas"
 	// PlatformQuotasColumn is the table column denoting the platform_quotas relation/edge.
 	PlatformQuotasColumn = "user_id"
+	// ModelRateLimitRulesTable is the table that holds the model_rate_limit_rules relation/edge.
+	ModelRateLimitRulesTable = "model_rate_limit_rules"
+	// ModelRateLimitRulesInverseTable is the table name for the ModelRateLimitRule entity.
+	// It exists in this package in order to avoid circular dependency with the "modelratelimitrule" package.
+	ModelRateLimitRulesInverseTable = "model_rate_limit_rules"
+	// ModelRateLimitRulesColumn is the table column denoting the model_rate_limit_rules relation/edge.
+	ModelRateLimitRulesColumn = "user_id"
 	// UserAllowedGroupsTable is the table that holds the user_allowed_groups relation/edge.
 	UserAllowedGroupsTable = "user_allowed_groups"
 	// UserAllowedGroupsInverseTable is the table name for the UserAllowedGroup entity.
@@ -612,6 +621,20 @@ func ByPlatformQuotas(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	}
 }
 
+// ByModelRateLimitRulesCount orders the results by model_rate_limit_rules count.
+func ByModelRateLimitRulesCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newModelRateLimitRulesStep(), opts...)
+	}
+}
+
+// ByModelRateLimitRules orders the results by model_rate_limit_rules terms.
+func ByModelRateLimitRules(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newModelRateLimitRulesStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
 // ByUserAllowedGroupsCount orders the results by user_allowed_groups count.
 func ByUserAllowedGroupsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -714,6 +737,13 @@ func newPlatformQuotasStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(PlatformQuotasInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, PlatformQuotasTable, PlatformQuotasColumn),
+	)
+}
+func newModelRateLimitRulesStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(ModelRateLimitRulesInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, ModelRateLimitRulesTable, ModelRateLimitRulesColumn),
 	)
 }
 func newUserAllowedGroupsStep() *sqlgraph.Step {
