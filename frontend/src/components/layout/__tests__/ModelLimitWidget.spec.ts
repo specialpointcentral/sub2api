@@ -30,7 +30,10 @@ function snapshot(overrides: Partial<ModelRateLimitSnapshot> = {}): ModelRateLim
 }
 
 describe('ModelLimitWidget', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.innerHTML = ''
+  })
 
   it('keeps overall concurrency as default, switches only on saturation, renders complete accessible groups, and honors unlimited and color boundaries', async () => {
     const wrapper = mount(ModelLimitWidget, {
@@ -45,13 +48,14 @@ describe('ModelLimitWidget', () => {
       'absolute',
       'right-0',
       'top-full',
-      'mt-2',
+      'pt-2',
+      'pointer-events-auto',
       'min-w-44',
       'w-max',
       'max-w-56',
-      'group-hover:block',
-      'group-focus-within:block',
     ]))
+    expect(detailCard.classes()).not.toContain('mt-2')
+    expect(detailCard.classes()).not.toContain('pointer-events-none')
     expect(detailCard.classes()).not.toContain('w-56')
     expect(detailCard.element.parentElement?.classList.contains('group')).toBe(true)
     expect(detailCard.element.parentElement?.classList.contains('relative')).toBe(true)
@@ -148,5 +152,60 @@ describe('ModelLimitWidget', () => {
     await wrapper.setProps({ snapshot: snapshot({ usage_available: false }) })
     expect(wrapper.text()).toContain('modelRateLimits.unavailable')
     expect(detailCard.text()).not.toContain('0%')
+  })
+
+  it('keeps the detail card open when the pointer quickly re-enters during the hide delay', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(ModelLimitWidget, {
+      attachTo: document.body,
+      props: { snapshot: snapshot(), poll: false },
+    })
+    const hoverRegion = wrapper.get('.group.relative')
+    const detailCard = wrapper.get('[data-test="model-limit-card"]')
+
+    expect(detailCard.classes()).toContain('hidden')
+
+    await hoverRegion.trigger('mouseenter')
+    expect(detailCard.classes()).not.toContain('hidden')
+
+    await hoverRegion.trigger('mouseleave')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(detailCard.classes()).not.toContain('hidden')
+
+    await hoverRegion.trigger('mouseenter')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(detailCard.classes()).not.toContain('hidden')
+
+    await hoverRegion.trigger('mouseleave')
+    await vi.advanceTimersByTimeAsync(149)
+    expect(detailCard.classes()).not.toContain('hidden')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(detailCard.classes()).toContain('hidden')
+
+    wrapper.unmount()
+  })
+
+  it('keeps the detail card open while keyboard focus remains within the widget', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(ModelLimitWidget, {
+      attachTo: document.body,
+      props: { snapshot: snapshot(), poll: false },
+    })
+    const hoverRegion = wrapper.get('.group.relative')
+    const trigger = wrapper.get('[data-test="model-limit-trigger"]')
+    const detailCard = wrapper.get('[data-test="model-limit-card"]')
+
+    await trigger.trigger('focusin')
+    expect(detailCard.classes()).not.toContain('hidden')
+
+    await hoverRegion.trigger('mouseleave')
+    await vi.advanceTimersByTimeAsync(150)
+    expect(detailCard.classes()).not.toContain('hidden')
+
+    await trigger.trigger('focusout', { relatedTarget: document.body })
+    await vi.advanceTimersByTimeAsync(150)
+    expect(detailCard.classes()).toContain('hidden')
+
+    wrapper.unmount()
   })
 })
