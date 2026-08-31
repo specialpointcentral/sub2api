@@ -1,5 +1,12 @@
 <template>
-  <div class="group relative ml-1 inline-flex items-center align-middle" :class="compact ? 'w-full' : ''">
+  <div
+    class="group relative ml-1 inline-flex items-center align-middle"
+    :class="compact ? 'w-full' : ''"
+    @mouseenter="showDetailCardForPointer"
+    @mouseleave="hideDetailCardForPointer"
+    @focusin="showDetailCardForFocus"
+    @focusout="hideDetailCardForFocus"
+  >
     <button
       type="button"
       data-test="model-limit-trigger"
@@ -29,97 +36,99 @@
       v-if="currentSnapshot"
       role="tooltip"
       data-test="model-limit-card"
-      class="pointer-events-none absolute right-0 top-full mt-2 hidden min-w-44 w-max max-w-56 rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-lg group-hover:block group-focus-within:block dark:border-dark-700 dark:bg-dark-800"
+      class="pointer-events-auto absolute right-0 top-full min-w-44 w-max max-w-56 pt-2"
+      :class="{ hidden: !detailCardVisible }"
     >
-      <div v-if="currentSnapshot.usage_available === false" class="mb-2 font-medium text-amber-600 dark:text-amber-300">
-        {{ t('modelRateLimits.unavailable') }}
-      </div>
-      <div data-test="overall-limits">
-        <h3 class="mb-1.5 font-semibold text-gray-900 dark:text-white">{{ t('modelRateLimits.overallHeading') }}</h3>
-        <div class="space-y-1.5">
-          <div data-test="usage-progress">
-            <UsageProgressBar
-              :label="t('modelRateLimits.concurrency')"
-              :utilization="currentSnapshot.overall_concurrency.utilization ?? 0"
-              :color="'indigo'"
-              :warning-at="70"
-              :danger-above="90"
-              :unavailable="!currentSnapshot.usage_available"
-              :value-text="usageText(currentSnapshot.overall_concurrency)"
-              :saturated="currentSnapshot.overall_concurrency.saturated"
-              reserve-warning-space
-            />
-          </div>
-          <div v-if="currentSnapshot.overall_rpm" data-test="usage-progress">
-            <UsageProgressBar
-              :label="'RPM'"
-              :utilization="currentSnapshot.overall_rpm.utilization ?? 0"
-              :color="'purple'"
-              :warning-at="70"
-              :danger-above="90"
-              :unavailable="!currentSnapshot.usage_available"
-              :value-text="usageText(currentSnapshot.overall_rpm)"
-              :saturated="currentSnapshot.overall_rpm.saturated"
-              reserve-warning-space
-            />
+      <div class="rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-lg dark:border-dark-700 dark:bg-dark-800">
+        <div v-if="currentSnapshot.usage_available === false" class="mb-2 font-medium text-amber-600 dark:text-amber-300">
+          {{ t('modelRateLimits.unavailable') }}
+        </div>
+        <div data-test="overall-limits">
+          <h3 class="mb-1.5 font-semibold text-gray-900 dark:text-white">{{ t('modelRateLimits.overallHeading') }}</h3>
+          <div class="space-y-1.5">
+            <div data-test="usage-progress">
+              <UsageProgressBar
+                :label="t('modelRateLimits.concurrency')"
+                :utilization="currentSnapshot.overall_concurrency.utilization ?? 0"
+                :color="'indigo'"
+                :warning-at="70"
+                :danger-above="90"
+                :unavailable="!currentSnapshot.usage_available"
+                :value-text="usageText(currentSnapshot.overall_concurrency)"
+                :saturated="currentSnapshot.overall_concurrency.saturated"
+                reserve-warning-space
+              />
+            </div>
+            <div v-if="currentSnapshot.overall_rpm" data-test="usage-progress">
+              <UsageProgressBar
+                :label="'RPM'"
+                :utilization="currentSnapshot.overall_rpm.utilization ?? 0"
+                :color="'purple'"
+                :warning-at="70"
+                :danger-above="90"
+                :unavailable="!currentSnapshot.usage_available"
+                :value-text="usageText(currentSnapshot.overall_rpm)"
+                :saturated="currentSnapshot.overall_rpm.saturated"
+                reserve-warning-space
+              />
+            </div>
           </div>
         </div>
-      </div>
 
-      <div
-        v-if="limitedModels.length"
-        data-test="model-limit-divider"
-        class="mt-2 border-t border-gray-100 pt-2 dark:border-dark-700"
-      >
-        <div data-test="model-limits">
-          <h3 class="mb-1.5 font-semibold text-gray-900 dark:text-white">{{ t('modelRateLimits.modelHeading') }}</h3>
-          <div v-for="model in limitedModels" :key="model.model" class="mb-2 last:mb-0">
-            <div class="mb-1 truncate font-medium text-gray-900 dark:text-gray-100">{{ model.model }}</div>
-            <div class="space-y-1.5 pl-1">
-              <div v-if="model.dimensions.concurrency?.limit != null" data-test="usage-progress">
-                <UsageProgressBar
-                  :label="t('modelRateLimits.concurrency')"
-                  :utilization="model.dimensions.concurrency.utilization ?? 0"
-                  :color="'indigo'"
-                  :warning-at="70"
-                  :danger-above="90"
-                  :unavailable="!currentSnapshot.usage_available"
-                  :value-text="usageText(model.dimensions.concurrency)"
-                  :saturated="model.dimensions.concurrency.saturated"
-                  reserve-warning-space
-                />
-              </div>
-              <div v-if="model.dimensions.rpm?.limit != null" data-test="usage-progress">
-                <UsageProgressBar
-                  :label="'RPM'"
-                  :utilization="model.dimensions.rpm.utilization ?? 0"
-                  :color="'purple'"
-                  :warning-at="70"
-                  :danger-above="90"
-                  :unavailable="!currentSnapshot.usage_available"
-                  :value-text="usageText(model.dimensions.rpm)"
-                  :saturated="model.dimensions.rpm.saturated"
-                  reserve-warning-space
-                />
-              </div>
-              <div v-if="model.dimensions.tpm?.limit != null" data-test="usage-progress">
-                <UsageProgressBar
-                  :label="'TPM'"
-                  :utilization="model.dimensions.tpm.utilization ?? 0"
-                  :color="'amber'"
-                  :warning-at="70"
-                  :danger-above="90"
-                  :unavailable="!currentSnapshot.usage_available"
-                  :value-text="usageText(model.dimensions.tpm)"
-                  :saturated="model.dimensions.tpm.saturated"
-                  reserve-warning-space
-                />
+        <div
+          v-if="limitedModels.length"
+          data-test="model-limit-divider"
+          class="mt-2 border-t border-gray-100 pt-2 dark:border-dark-700"
+        >
+          <div data-test="model-limits">
+            <h3 class="mb-1.5 font-semibold text-gray-900 dark:text-white">{{ t('modelRateLimits.modelHeading') }}</h3>
+            <div v-for="model in limitedModels" :key="model.model" class="mb-2 last:mb-0">
+              <div class="mb-1 truncate font-medium text-gray-900 dark:text-gray-100">{{ model.model }}</div>
+              <div class="space-y-1.5 pl-1">
+                <div v-if="model.dimensions.concurrency?.limit != null" data-test="usage-progress">
+                  <UsageProgressBar
+                    :label="t('modelRateLimits.concurrency')"
+                    :utilization="model.dimensions.concurrency.utilization ?? 0"
+                    :color="'indigo'"
+                    :warning-at="70"
+                    :danger-above="90"
+                    :unavailable="!currentSnapshot.usage_available"
+                    :value-text="usageText(model.dimensions.concurrency)"
+                    :saturated="model.dimensions.concurrency.saturated"
+                    reserve-warning-space
+                  />
+                </div>
+                <div v-if="model.dimensions.rpm?.limit != null" data-test="usage-progress">
+                  <UsageProgressBar
+                    :label="'RPM'"
+                    :utilization="model.dimensions.rpm.utilization ?? 0"
+                    :color="'purple'"
+                    :warning-at="70"
+                    :danger-above="90"
+                    :unavailable="!currentSnapshot.usage_available"
+                    :value-text="usageText(model.dimensions.rpm)"
+                    :saturated="model.dimensions.rpm.saturated"
+                    reserve-warning-space
+                  />
+                </div>
+                <div v-if="model.dimensions.tpm?.limit != null" data-test="usage-progress">
+                  <UsageProgressBar
+                    :label="'TPM'"
+                    :utilization="model.dimensions.tpm.utilization ?? 0"
+                    :color="'amber'"
+                    :warning-at="70"
+                    :danger-above="90"
+                    :unavailable="!currentSnapshot.usage_available"
+                    :value-text="usageText(model.dimensions.tpm)"
+                    :saturated="model.dimensions.tpm.saturated"
+                    reserve-warning-space
+                  />
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-
     </div>
   </div>
 </template>
@@ -132,6 +141,7 @@ import { getModelRateLimitSnapshot, type ModelRateLimitSnapshot, type ModelRateL
 
 const DEFAULT_MODEL_LIMIT_REFRESH_MS = 5000
 const MAX_MODEL_LIMIT_BACKOFF_MS = 60_000
+const DETAIL_CARD_HIDE_DELAY_MS = 150
 const props = withDefaults(defineProps<{
   snapshot?: ModelRateLimitSnapshot
   poll?: boolean
@@ -142,9 +152,13 @@ const emit = defineEmits<{ (event: 'update:snapshot', snapshot: ModelRateLimitSn
 const { t } = useI18n()
 const fetchedSnapshot = ref<ModelRateLimitSnapshot>()
 const currentSnapshot = computed(() => props.snapshot ?? fetchedSnapshot.value)
+const detailCardVisible = ref(false)
 let timer: ReturnType<typeof setTimeout> | undefined
+let detailCardHideTimer: ReturnType<typeof setTimeout> | undefined
 let controller: AbortController | undefined
 let failures = 0
+let pointerWithinDetailRegion = false
+let focusWithinDetailRegion = false
 
 type Primary = { model: string; dimension: 'concurrency' | 'rpm' | 'tpm'; usage: ModelRateLimitUsage; overall: boolean }
 
@@ -212,6 +226,48 @@ function dimensionLabel(dimension: 'concurrency' | 'rpm' | 'tpm') {
   return dimension === 'concurrency' ? t('modelRateLimits.concurrency') : dimension.toUpperCase()
 }
 
+function clearDetailCardHideTimer() {
+  clearTimeout(detailCardHideTimer)
+  detailCardHideTimer = undefined
+}
+
+function showDetailCard() {
+  clearDetailCardHideTimer()
+  detailCardVisible.value = true
+}
+
+function scheduleDetailCardHide() {
+  clearDetailCardHideTimer()
+  detailCardHideTimer = setTimeout(() => {
+    detailCardHideTimer = undefined
+    if (pointerWithinDetailRegion || focusWithinDetailRegion) return
+    detailCardVisible.value = false
+  }, DETAIL_CARD_HIDE_DELAY_MS)
+}
+
+function showDetailCardForPointer() {
+  pointerWithinDetailRegion = true
+  showDetailCard()
+}
+
+function hideDetailCardForPointer() {
+  pointerWithinDetailRegion = false
+  if (!focusWithinDetailRegion) scheduleDetailCardHide()
+}
+
+function showDetailCardForFocus() {
+  focusWithinDetailRegion = true
+  showDetailCard()
+}
+
+function hideDetailCardForFocus(event: FocusEvent) {
+  const container = event.currentTarget as HTMLElement | null
+  const next = event.relatedTarget as Node | null
+  if (container && next && container.contains(next)) return
+  focusWithinDetailRegion = false
+  if (!pointerWithinDetailRegion) scheduleDetailCardHide()
+}
+
 function schedule(delay: number) {
   clearTimeout(timer)
   const jitter = Math.round(delay * (Math.random() * 0.2 - 0.1))
@@ -250,6 +306,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   clearTimeout(timer)
+  clearDetailCardHideTimer()
   controller?.abort()
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
