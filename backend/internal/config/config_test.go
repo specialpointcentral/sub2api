@@ -30,6 +30,24 @@ func TestLoadDefaultModelsListReadMaxBytes(t *testing.T) {
 	require.Equal(t, DefaultModelsListReadMaxBytes, cfg.Gateway.ModelsListReadMaxBytes)
 }
 
+func TestLoadDefaultPricingCatalogUsesMaintainedFork(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	const rawBase = "https://raw.githubusercontent.com/specialpointcentral/model-price-repo/main/"
+	require.Equal(t, rawBase+"model_prices_and_context_window.json", cfg.Pricing.RemoteURL)
+	require.Equal(t, rawBase+"model_prices_and_context_window.sha256", cfg.Pricing.HashURL)
+
+	examplePath := filepath.Join("..", "..", "..", "deploy", "config.example.yaml")
+	example, err := os.ReadFile(examplePath)
+	require.NoError(t, err)
+	require.Contains(t, string(example), rawBase+"model_prices_and_context_window.json")
+	require.Contains(t, string(example), rawBase+"model_prices_and_context_window.sha256")
+	require.NotContains(t, string(example), "refs/heads/main//")
+}
+
 func TestLoadTimezonePrecedence(t *testing.T) {
 	tests := []struct {
 		name         string
