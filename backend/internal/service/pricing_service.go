@@ -1236,6 +1236,23 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 	return out
 }
 
+func normalizeGPT56FamilyPricingModel(model string) string {
+	for _, family := range []string{
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
+	} {
+		if model == family {
+			return family
+		}
+		suffix, ok := strings.CutPrefix(model, family+"-")
+		if ok && (suffix == "preview" || isKnownCodexModelSuffix(suffix)) {
+			return family
+		}
+	}
+	return ""
+}
+
 func normalizeModelNameForPricing(model string) string {
 	// Common Gemini/VertexAI forms:
 	// - models/gemini-2.0-flash-exp
@@ -1255,6 +1272,9 @@ func normalizeModelNameForPricing(model string) string {
 
 	model = strings.TrimLeft(model, "/")
 	if canonical := canonicalizeOpenAIModelAliasSpelling(model); canonical != "" {
+		if family := normalizeGPT56FamilyPricingModel(canonical); family != "" {
+			return family
+		}
 		if canonical == "gpt-6" {
 			return "gpt-6-astra"
 		}

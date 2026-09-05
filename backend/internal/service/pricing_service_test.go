@@ -392,6 +392,35 @@ func TestGPT56DedicatedFallbacksUseOfficialRates(t *testing.T) {
 	}
 }
 
+func TestPricingServiceGPT56FamilyVariantsBeatBareGPT56(t *testing.T) {
+	bare := &LiteLLMModelPricing{InputCostPerToken: 4e-6, OutputCostPerToken: 20e-6}
+	sol := &LiteLLMModelPricing{InputCostPerToken: 5e-6, OutputCostPerToken: 30e-6}
+	terra := &LiteLLMModelPricing{InputCostPerToken: 2.5e-6, OutputCostPerToken: 15e-6}
+	luna := &LiteLLMModelPricing{InputCostPerToken: 1e-6, OutputCostPerToken: 6e-6}
+	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-5.6":       bare,
+		"gpt-5.6-sol":   sol,
+		"gpt-5.6-terra": terra,
+		"gpt-5.6-luna":  luna,
+	}}
+
+	tests := []struct {
+		model string
+		want  *LiteLLMModelPricing
+	}{
+		{model: "gpt-5.6-sol-preview", want: sol},
+		{model: "gpt-5.6-terra-high", want: terra},
+		{model: "gpt-5.6-luna-2026-08-01", want: luna},
+		{model: "openai/gpt-5.6-luna-xhigh", want: luna},
+		{model: "gpt-5.6-nebula-high", want: bare},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			require.Same(t, tt.want, svc.GetModelPricing(tt.model))
+		})
+	}
+}
+
 func assertGPT56FallbackPricing(t *testing.T, pricing *ModelPricing, input, cached, cacheWrite, output float64) {
 	t.Helper()
 	require.InDelta(t, input, pricing.InputPricePerToken, 1e-12)
