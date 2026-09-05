@@ -860,7 +860,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		lease, acquireErr := pool.Acquire(acquireCtx, req)
 		acquireCancel()
 		var dialErr *openAIWSDialError
-		if acquireErr != nil && s.isAgentIdentityAccount(ctx, account) && errors.As(acquireErr, &dialErr) && isAgentIdentityTaskInvalidWSDialError(dialErr) && !agentTaskRecoveryTried {
+		if errors.As(acquireErr, &dialErr) && dialErr != nil {
+			markOpenAICyberPolicyEvent(c, dialErr.ResponseBody, dialErr.StatusCode, nil)
+		}
+		if acquireErr != nil && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidWSDialError(dialErr) && !agentTaskRecoveryTried {
 			agentTaskRecoveryTried = true
 			if recoveryErr := s.recoverAgentIdentityTask(ctx, account, account.GetCredential("task_id")); recoveryErr != nil {
 				return nil, fmt.Errorf("agent identity task recovery failed: %w", recoveryErr)
@@ -894,8 +897,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				wsPath,
 				account.ProxyID != nil && account.Proxy != nil,
 			)
-			var dialErr *openAIWSDialError
-			if errors.As(acquireErr, &dialErr) && dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
+			if dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
 				s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(acquireErr.Error()), canonicalModel)
 				return nil, s.newOpenAIWSRateLimitFailoverError(account, dialErr.ResponseHeaders, nil, acquireErr.Error())
 			}
@@ -939,6 +941,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			truncateOpenAIWSLogValue(preferred, openAIWSIDValueMaxLen),
 		)
 		return lease, nil
+	}
+	finishHandshakeFailure := func(turn int, turnErr error) error {
+		if hooks != nil && hooks.AfterTurn != nil {
+			hooks.AfterTurn(turn, nil, turnErr)
+		}
+		return turnErr
 	}
 
 	var rejectedFieldRetryState *openAIResponsesRejectedFieldRetryState
@@ -1626,7 +1634,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if sessionLease == nil {
 			acquiredLease, acquireErr := acquireTurnLease(turn, preferredConnID, forcePreferredConn)
 			if acquireErr != nil {
-				return fmt.Errorf("acquire upstream websocket: %w", acquireErr)
+				return finishHandshakeFailure(turn, fmt.Errorf("acquire upstream websocket: %w", acquireErr))
 			}
 			sessionLease = acquiredLease
 			sessionConnID = strings.TrimSpace(sessionLease.ConnID())
@@ -1734,7 +1742,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 				acquiredLease, acquireErr := acquireTurnLease(turn, preferredConnID, forcePreferredConn)
 				if acquireErr != nil {
-					return fmt.Errorf("acquire upstream websocket after preflight ping fail: %w", acquireErr)
+					return finishHandshakeFailure(turn, fmt.Errorf("acquire upstream websocket after preflight ping fail: %w", acquireErr))
 				}
 				sessionLease = acquiredLease
 				sessionConnID = strings.TrimSpace(sessionLease.ConnID())
