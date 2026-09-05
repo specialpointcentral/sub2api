@@ -427,7 +427,7 @@ Run:
 
 ```bash
 cd /tmp/model-price-repo-maintained
-./rebuild.sh
+bash rebuild.sh
 ```
 
 Expected: the LiteLLM catalog downloads successfully, the report includes `Overrides: 2`, and both output files are regenerated.
@@ -467,7 +467,7 @@ Document that `price_overrides.json` opts complete model entries out of upstream
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py' -v
-./rebuild.sh
+bash rebuild.sh
 python3 scripts/sync_prices.py --config config.json --repo-root .
 ```
 
@@ -515,7 +515,7 @@ Expected: the ancestry command exits 0 and the worktree is clean. If the schedul
 ```bash
 git -C /tmp/model-price-repo-maintained rebase origin/main
 cd /tmp/model-price-repo-maintained
-./rebuild.sh
+bash rebuild.sh
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 git add model_prices_and_context_window.json model_prices_and_context_window.sha256
 GIT_EDITOR=true git rebase --continue
