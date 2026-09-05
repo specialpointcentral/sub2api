@@ -38,10 +38,15 @@ prices already agree at $5.00 / $30.00 per MTok.
   by the site.
 - Make each managed model entry deterministic and free of price fields inherited
   from upstream.
+- Ensure aliases of managed models are generated from the final managed entry,
+  so an alias cannot retain the pre-override upstream price.
 - Initially manage the complete `gpt-5.6-luna` and `gpt-5.6-terra` entries.
 - Publish a matching SHA-256 file for every generated catalog revision.
 - Prove standard, priority, flex, batch, cache, and long-context price behavior
   with automated tests.
+- Resolve GPT-5.6 family suffixes to `sol`, `terra`, or `luna` before the generic
+  OpenAI numeric-version fallback can match the differently priced bare
+  `gpt-5.6` catalog entry.
 - Preserve current `site` history and leave publishing or tagging the `sub2api`
   repository as a separate, explicit step.
 
@@ -51,18 +56,15 @@ prices already agree at $5.00 / $30.00 per MTok.
 - Do not use a deployment-local `pricing.override_file` as the primary fix.
 - Do not change group or channel-specific pricing precedence.
 - Do not add an administration UI for editing the catalog.
-- Do not alter the current GPT-5.6 alias/suffix normalization unless a new
-  failing regression test proves a remaining defect. The current `site` branch
-  already normalizes family variants such as `gpt-5.6-luna-high` and dated
-  suffixes to the family model.
 - Do not push `sub2api/site` or create a release tag as part of implementation
   without a later publication instruction.
 
 ## Architecture
 
 The pricing fork remains a generated catalog. Its existing sync pipeline fetches
-LiteLLM data, filters and merges it, applies aliases and custom models, and then
-writes a stable, sorted JSON document and its SHA-256.
+LiteLLM data, filters and merges it, applies custom models and managed entries,
+regenerates aliases from those final source entries, and then writes a stable,
+sorted JSON document and its SHA-256.
 
 A final managed-entry stage is added immediately before serialization:
 
@@ -74,8 +76,11 @@ A final managed-entry stage is added immediately before serialization:
    finite, non-negative number; Luna and Terra are additionally tested against
    their complete expected price matrices.
 3. Replace each matching synchronized entry wholesale with the managed entry.
-4. Serialize the complete catalog deterministically.
-5. Hash the exact serialized bytes and write the `.sha256` file.
+4. Generate aliases after replacement so `codex-auto-review`, whose source is
+   `gpt-5.6-luna`, receives the final site-owned Luna entry rather than the
+   reduced upstream entry.
+5. Serialize the complete catalog deterministically.
+6. Hash the exact serialized bytes and write the `.sha256` file.
 
 Whole-entry replacement is intentional. A field-level merge could leave
 upstream `*_above_272k_tokens`, priority, flex, or future price fields beside the
@@ -140,7 +145,9 @@ token limits, service tiers, and reasoning capabilities.
 `price_overrides.json` is the source of truth for models whose complete price
 cards are site-owned. Adding a model to this file opts that model out of
 automatic per-entry updates. Removing a model returns it to the ordinary sync
-result on the next rebuild.
+result on the next rebuild. A managed key must not also appear in
+`config.json.custom_models`; Luna and Terra are removed from that section so the
+repository contains only one editable source of truth for each managed entry.
 
 ### Synchronization logic
 
@@ -171,7 +178,9 @@ The fork README documents:
 
 The existing scheduled and manual workflow remains enabled. Tests run before a
 generated catalog is committed. A failed validation or test prevents the
-workflow from publishing a catalog or hash.
+workflow from publishing a catalog or hash. Alias generation is deliberately
+the last catalog-transformation step: aliases always copy the final custom or
+managed source entry.
 
 ## `sub2api` Integration
 
@@ -190,13 +199,20 @@ No new runtime precedence layer is introduced. `sub2api` continues to download,
 hash-check, cache, parse, and hot-reload the catalog using its existing pricing
 service.
 
+The pricing lookup order changes only for recognized GPT-5.6 family variants.
+`gpt-5.6-sol-*`, `gpt-5.6-terra-*`, and `gpt-5.6-luna-*` first contribute their
+canonical family model as a deterministic lookup candidate. This candidate is
+checked before `generateOpenAIModelVariants` can reduce the request to the bare
+`gpt-5.6` entry. Unknown GPT-5.6 names retain the existing fallback behavior.
+
 ## Data Flow
 
 ```text
 LiteLLM catalog
     -> filter and ordinary sync merge
-    -> aliases and existing custom models
+    -> existing cache auto-fill and custom models
     -> whole-entry managed replacements
+    -> aliases copied from final source entries
     -> deterministic JSON
     -> SHA-256 of exact JSON bytes
     -> specialpointcentral/model-price-repo raw files
@@ -231,6 +247,8 @@ Python standard-library tests cover:
 
 - managed entries replace synchronized entries exactly;
 - unrelated entries remain unchanged;
+- managed model keys do not also appear in `config.json.custom_models`;
+- `codex-auto-review` exactly matches the final managed `gpt-5.6-luna` entry;
 - upstream-only `*_above_272k_tokens` fields disappear from replaced entries;
 - missing, malformed, and structurally invalid managed data fails closed;
 - deterministic serialization and exact SHA-256 generation;
@@ -247,10 +265,9 @@ Go tests cover:
   flex, batch, cache-read, and cache-creation prices;
 - 272,000 tokens remain at base price and a request above the threshold applies
   the input/cache `2.0` and output `1.5` multipliers;
-- representative Luna/Terra effort and dated suffixes resolve to the correct
-  family even when a differently priced bare `gpt-5.6` entry exists. If the
-  current implementation already passes this regression test, no normalization
-  production code is changed.
+- representative Sol/Terra/Luna effort and dated suffixes resolve to the correct
+  family even when a differently priced bare `gpt-5.6` entry exists;
+- an unknown GPT-5.6 family name does not get reclassified as Luna or Terra.
 
 Targeted tests run first. The final `sub2api` verification includes the current
 backend build, unit suite, and lint configuration derived from repository CI.
