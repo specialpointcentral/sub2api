@@ -234,30 +234,40 @@ must not claim to identify those requests as the same session.
 
 ## Storage design
 
-Extend the existing OpenAI response state store, which already persists
-response ownership and response-to-account mappings, with lineage operations:
+Add a narrow optional lineage store beside the existing cyber block store. The
+concrete `gatewayCache` implements it directly with Redis strings; do not widen
+the general `GatewayCache` or `OpenAIWSStateStore` interfaces, whose existing
+response bindings carry integer IDs rather than opaque session-root hashes:
 
 ```go
-BindCyberSessionRoot(
+type CyberSessionLineageStore interface {
+	BindCyberSessionRoot(
 	ctx context.Context,
 	groupID int64,
 	apiKeyID int64,
 	responseID string,
 	root string,
 	ttl time.Duration,
-) error
+	) error
 
-GetCyberSessionRoot(
+	GetCyberSessionRoot(
 	ctx context.Context,
 	groupID int64,
 	apiKeyID int64,
 	responseID string,
-) (root string, found bool, err error)
+	) (root string, found bool, err error)
+}
 ```
 
-Use both bounded in-process cache and Redis, following the existing HTTP
-response-owner pattern. Redis keys contain hashes, not raw response IDs or
-session identifiers. Different API keys cannot resolve each other's roots.
+The gateway service discovers this interface with a type assertion, matching
+the current optional `CyberSessionBlockStore` pattern. Tests and decorators
+that do not implement lineage continue to support explicit/transcript blocking
+and fail open only for the lineage extension.
+
+Redis keys contain hashes, not raw response IDs or session identifiers.
+Different groups and API keys cannot resolve each other's roots. Reads and
+writes use the existing bounded Redis timeout; no new database table or schema
+migration is introduced.
 
 Lineage storage failure is fail-open and emits a bounded structured warning.
 It must not make the model request unavailable when Redis is degraded.
